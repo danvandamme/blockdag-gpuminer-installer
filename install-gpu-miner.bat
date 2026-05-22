@@ -395,11 +395,7 @@ if "%HAS_GCC%"=="1" if exist "%SRC_FILE%" (
     copy /y "%CL_FILE%" "%BIN_DIR%\dagtech_gpu.cl" >nul 2>&1
     echo [GPU Miner] OpenCL kernel installed.
 
-    gcc -DDAGTECH_GPU -I"%OPENCL_HEADERS_DIR%" -L"%OPENCL_HEADERS_DIR%" -O2 -march=native -Wall -D_WIN32_WINNT=0x0600 ^
-        -o "%BIN_DIR%\dagtech-gpu-miner.exe" ^
-        "%SRC_FILE%" ^
-        -lws2_32 -lm -lkernel32 -lOpenCL ^
-        -static-libgcc -Wl,-Bstatic,-lpthread,-Bdynamic
+    gcc -DDAGTECH_GPU -I"%OPENCL_HEADERS_DIR%" -L"%OPENCL_HEADERS_DIR%" -O2 -march=native -Wall -D_WIN32_WINNT=0x0600 -o "%BIN_DIR%\dagtech-gpu-miner.exe" "%SRC_FILE%" -lws2_32 -lm -lkernel32 -lOpenCL -static-libgcc -Wl,-Bstatic,-lpthread,-Bdynamic
 
     if errorlevel 1 (
         echo [GPU Miner] Compile failed - keeping bundled binary if available.
