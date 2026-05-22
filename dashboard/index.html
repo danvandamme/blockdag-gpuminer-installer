@@ -829,6 +829,25 @@
             return n.toString();
         }
 
+        // Returns { value: '1.23', unit: 'KH/s', html: '1.23 <span class="stat-unit">KH/s</span>' }
+        function formatHashrate(h) {
+            if (h === null || h === undefined || isNaN(h)) {
+                return { value: '--', unit: 'H/s', html: '-- <span class="stat-unit">H/s</span>', text: '-- H/s' };
+            }
+            let value, unit;
+            if      (h >= 1e12) { value = (h / 1e12).toFixed(2); unit = 'TH/s'; }
+            else if (h >= 1e9)  { value = (h / 1e9 ).toFixed(2); unit = 'GH/s'; }
+            else if (h >= 1e6)  { value = (h / 1e6 ).toFixed(2); unit = 'MH/s'; }
+            else if (h >= 1e3)  { value = (h / 1e3 ).toFixed(2); unit = 'KH/s'; }
+            else                { value = h.toFixed(1);           unit = 'H/s';  }
+            return {
+                value,
+                unit,
+                html: `${value} <span class="stat-unit">${unit}</span>`,
+                text: `${value} ${unit}`
+            };
+        }
+
         function addLog(msg, type = '') {
             const entry = document.createElement('div');
             entry.className = 'log-entry' + (type ? ' ' + type : '');
@@ -881,7 +900,7 @@
         function applyMetrics(data) {
             lastAccepted = data.accepted;
             lastUptime   = data.uptime;
-            els.hashrate.innerHTML   = `${data.hashrate.toFixed(1)} <span class="stat-unit">H/s</span>`;
+            els.hashrate.innerHTML   = formatHashrate(data.hashrate).html;
             els.accepted.textContent  = data.accepted;
             els.submitted.textContent = data.submitted;
             els.uptime.textContent    = formatUptime(data.uptime);
@@ -899,12 +918,12 @@
             // CPU / GPU per-source hashrate card
             const cpuHrEl = document.getElementById('cpuHashrateVal');
             const gpuHrEl = document.getElementById('gpuHashrateVal');
-            if (cpuHrEl) cpuHrEl.innerHTML = `${(data.cpu_hashrate || 0).toFixed(1)} <span class="stat-unit">H/s</span>`;
-            if (gpuHrEl) gpuHrEl.innerHTML = `${(data.gpu_hashrate || 0).toFixed(1)} <span class="stat-unit">H/s</span>`;
+            if (cpuHrEl) cpuHrEl.innerHTML = formatHashrate(data.cpu_hashrate || 0).html;
+            if (gpuHrEl) gpuHrEl.innerHTML = formatHashrate(data.gpu_hashrate || 0).html;
 
             // GPU info card
             const ghEl = document.getElementById('gpuHashrateInfo');
-            if (ghEl) ghEl.textContent = data.gpu_hashrate ? data.gpu_hashrate.toFixed(1) + ' H/s' : '0.0 H/s';
+            if (ghEl) ghEl.textContent = formatHashrate(data.gpu_hashrate || 0).text;
             const modeEl = document.getElementById('miningMode');
             if (modeEl && data.mining_mode) {
                 const modes = { cpu: 'CPU Only', gpu: 'GPU Only', both: 'CPU + GPU' };
@@ -951,7 +970,7 @@
             canvas.height = rect.height * dpr;
             ctx.scale(dpr, dpr);
             const w = rect.width, h = rect.height;
-            const padding = { top: 10, right: 10, bottom: 30, left: 50 };
+            const padding = { top: 10, right: 10, bottom: 30, left: 72 };
             const chartW = w - padding.left - padding.right;
             const chartH = h - padding.top  - padding.bottom;
             ctx.clearRect(0, 0, w, h);
@@ -971,9 +990,9 @@
             for (let i = 0; i <= 4; i++) {
                 const y = padding.top + (chartH / 4) * i;
                 ctx.beginPath(); ctx.moveTo(padding.left, y); ctx.lineTo(w - padding.right, y); ctx.stroke();
-                const val = (maxVal * (1 - i / 4)).toFixed(1);
+                const label = formatHashrate(maxVal * (1 - i / 4)).text;
                 ctx.fillStyle = '#64748b'; ctx.font = '11px SF Mono, monospace'; ctx.textAlign = 'right';
-                ctx.fillText(val, padding.left - 8, y + 4);
+                ctx.fillText(label, padding.left - 8, y + 4);
             }
 
             // Helper: draw one series line, optionally filled
