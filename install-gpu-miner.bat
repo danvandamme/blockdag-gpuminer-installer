@@ -208,7 +208,7 @@ REM ============================================================================
 set "OPENCL_HEADERS_DIR=%~dp0opencl-headers"
 if "%HAS_GCC%"=="1" if not exist "%OPENCL_HEADERS_DIR%\CL\cl.h" (
     echo [GPU Miner] OpenCL headers not found. Downloading from Khronos...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$zip='$env:TEMP\opencl-headers.zip'; $ext='$env:TEMP\ocl-ext'; Invoke-WebRequest 'https://github.com/KhronosGroup/OpenCL-Headers/archive/refs/heads/main.zip' -OutFile $zip -UseBasicParsing; if (Test-Path $ext) { Remove-Item $ext -Recurse -Force }; Expand-Archive $zip -DestinationPath $ext -Force; $clSrc=Join-Path $ext 'OpenCL-Headers-main\CL'; $dest='%OPENCL_HEADERS_DIR%'; if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }; Copy-Item $clSrc -Destination $dest -Recurse -Force; Remove-Item $zip,$ext -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '[GPU Miner] OpenCL headers installed.'"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$zip='%TEMP%\opencl-headers.zip'; $ext='%TEMP%\ocl-ext'; Invoke-WebRequest 'https://github.com/KhronosGroup/OpenCL-Headers/archive/refs/heads/main.zip' -OutFile $zip -UseBasicParsing; if (Test-Path $ext) { Remove-Item $ext -Recurse -Force }; Expand-Archive $zip -DestinationPath $ext -Force; $clSrc=Join-Path $ext 'OpenCL-Headers-main\CL'; $dest='%OPENCL_HEADERS_DIR%'; if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }; Copy-Item $clSrc -Destination $dest -Recurse -Force; Remove-Item $zip,$ext -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '[GPU Miner] OpenCL headers installed.'"
     if errorlevel 1 (
         echo [GPU Miner] WARNING: Could not download OpenCL headers. GPU compile may fail.
     ) else (
@@ -229,6 +229,7 @@ if "%HAS_GCC%"=="1" if not exist "%OPENCL_HEADERS_DIR%\libOpenCL.a" (
         for /f "tokens=*" %%g in ('where gcc 2^>nul') do if not defined _GCC_BIN_FOR_OCL set "_GCC_BIN_FOR_OCL=%%~dpg"
         if defined _GCC_BIN_FOR_OCL (
             if exist "!_GCC_BIN_FOR_OCL!gendef.exe" if exist "!_GCC_BIN_FOR_OCL!dlltool.exe" (
+                if not exist "%OPENCL_HEADERS_DIR%" mkdir "%OPENCL_HEADERS_DIR%"
                 pushd "%OPENCL_HEADERS_DIR%"
                 "!_GCC_BIN_FOR_OCL!gendef.exe" "%SystemRoot%\System32\OpenCL.dll" >nul 2>&1
                 "!_GCC_BIN_FOR_OCL!dlltool.exe" -d OpenCL.def -l libOpenCL.a >nul 2>&1
