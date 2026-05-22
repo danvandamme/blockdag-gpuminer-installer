@@ -40,8 +40,8 @@ net session >nul 2>&1
 if errorlevel 1 (
     echo [GPU Miner] Administrator rights required - click Yes on the UAC prompt.
     echo [GPU Miner] The installer will continue in a new window.
-    set "_SELF=%~f0"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -Verb RunAs -ArgumentList ('/d /k ' + [char]34 + $env:_SELF + [char]34)"
+    set "_SELF=%CD%\%~nx0"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -Verb RunAs -ArgumentList '/d', '/k', ('\"' + $env:_SELF + '\"')"
     timeout /t 3 /nobreak >nul
     exit /b
 )
@@ -259,16 +259,16 @@ set "SRC_FILE=%~dp0dagtech_miner.c"
 set "SHA256_FILE=%~dp0dagtech_sha256.h"
 set "CL_FILE=%~dp0dagtech_gpu.cl"
 
-if "%HAS_GCC%"=="1" if not exist "%SRC_FILE%" (
-    echo [GPU Miner] ERROR: dagtech_miner.c not found in installer folder.
-    echo         Expected: %SRC_FILE%
-    pause & exit /b 1
-)
-if "%HAS_GCC%"=="1" if not exist "%CL_FILE%" (
-    echo [GPU Miner] ERROR: dagtech_gpu.cl not found in installer folder.
-    echo         Expected: %CL_FILE%
-    pause & exit /b 1
-)
+if "%HAS_GCC%"=="1" if not exist "%SRC_FILE%" goto :missing_src
+if "%HAS_GCC%"=="1" if not exist "%CL_FILE%" goto :missing_cl
+goto :src_files_ok
+:missing_src
+echo [GPU Miner] ERROR: dagtech_miner.c not found in installer folder.
+pause & exit /b 1
+:missing_cl
+echo [GPU Miner] ERROR: dagtech_gpu.cl not found in installer folder.
+pause & exit /b 1
+:src_files_ok
 
 REM ============================================================================
 REM 4. Configuration
@@ -383,42 +383,40 @@ if exist "%~dp0libwinpthread-1.dll" (
 )
 
 REM -- Compile from source if compiler available --
-if "%HAS_GCC%"=="1" if exist "%SRC_FILE%" (
-    echo [GPU Miner] Compiling from source with GPU support...
+if not "%HAS_GCC%"=="1" goto :compile_else
+if not exist "%SRC_FILE%" goto :compile_else
 
-    if exist "%SHA256_FILE%" (
-        for %%f in ("%SRC_FILE%") do set "SRC_DIR=%%~dpf"
-        copy /y "%SHA256_FILE%" "!SRC_DIR!" >nul 2>&1
-    )
+echo [GPU Miner] Compiling from source with GPU support...
+copy /y "%CL_FILE%" "%BIN_DIR%\dagtech_gpu.cl" >nul 2>&1
+echo [GPU Miner] OpenCL kernel installed.
 
-    REM Copy OpenCL kernel to bin dir so it can be found at runtime
-    copy /y "%CL_FILE%" "%BIN_DIR%\dagtech_gpu.cl" >nul 2>&1
-    echo [GPU Miner] OpenCL kernel installed.
+gcc -DDAGTECH_GPU -I"%OPENCL_HEADERS_DIR%" -L"%OPENCL_HEADERS_DIR%" -O2 -march=native -Wall -D_WIN32_WINNT=0x0600 -o "%BIN_DIR%\dagtech-gpu-miner.exe" "%SRC_FILE%" -lws2_32 -lm -lkernel32 -lOpenCL -static-libgcc -Wl,-Bstatic,-lpthread,-Bdynamic
 
-    gcc -DDAGTECH_GPU -I"%OPENCL_HEADERS_DIR%" -L"%OPENCL_HEADERS_DIR%" -O2 -march=native -Wall -D_WIN32_WINNT=0x0600 -o "%BIN_DIR%\dagtech-gpu-miner.exe" "%SRC_FILE%" -lws2_32 -lm -lkernel32 -lOpenCL -static-libgcc -Wl,-Bstatic,-lpthread,-Bdynamic
-
-    if errorlevel 1 (
-        echo [GPU Miner] Compile failed - keeping bundled binary if available.
-    ) else (
-        echo [GPU Miner] Compiled successfully.
-        REM Copy MinGW runtime DLLs
-        for /f "tokens=*" %%g in ('where gcc 2^>nul') do if not defined _GCC_DIR set "_GCC_DIR=%%~dpg"
-        if defined _GCC_DIR (
-            for %%d in (libwinpthread-1.dll libgcc_s_seh-1.dll libgcc_s_dw2-1.dll) do (
-                if exist "!_GCC_DIR!%%d" (
-                    copy /y "!_GCC_DIR!%%d" "%BIN_DIR%\" >nul
-                    echo [GPU Miner] Runtime DLL installed: %%d
-                )
-            )
+if errorlevel 1 (
+    echo [GPU Miner] Compile failed - keeping bundled binary if available.
+    goto :compile_done
+)
+echo [GPU Miner] Compiled successfully.
+set "_GCC_DIR="
+for /f "tokens=*" %%g in ('where gcc 2^>nul') do if not defined _GCC_DIR set "_GCC_DIR=%%~dpg"
+if defined _GCC_DIR (
+    for %%d in (libwinpthread-1.dll libgcc_s_seh-1.dll libgcc_s_dw2-1.dll) do (
+        if exist "!_GCC_DIR!%%d" (
+            copy /y "!_GCC_DIR!%%d" "%BIN_DIR%\" >nul
+            echo [GPU Miner] Runtime DLL installed: %%d
         )
     )
-) else (
-    REM Still copy the kernel file even if not compiling
-    if exist "%CL_FILE%" (
-        copy /y "%CL_FILE%" "%BIN_DIR%\dagtech_gpu.cl" >nul 2>&1
-        echo [GPU Miner] OpenCL kernel installed.
-    )
 )
+goto :compile_done
+
+:compile_else
+REM Still copy the kernel file even if not compiling
+if exist "%CL_FILE%" (
+    copy /y "%CL_FILE%" "%BIN_DIR%\dagtech_gpu.cl" >nul 2>&1
+    echo [GPU Miner] OpenCL kernel installed.
+)
+
+:compile_done
 
 if not exist "%BIN_DIR%\dagtech-gpu-miner.exe" (
     echo [GPU Miner] ERROR: No binary available. Cannot continue.
