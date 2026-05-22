@@ -417,6 +417,8 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                             # Match GPU stats line: X.XX H/s | CPU: Y H/s | GPU: Z H/s | Shares: ...
                             if (-not $foundStats -and $line -match '\[DagTech\]\s+([\d.]+)\s+H/s\s+\|\s+CPU:\s+([\d.]+)\s+H/s\s+\|\s+GPU:\s+([\d.]+)\s+H/s\s+\|\s+Shares:\s+(\d+)/(\d+)/(\d+).*Uptime:\s+(\d+)h(\d+)m') {
                                 $out["hashrate"]     = [double]$Matches[1]
+                                $out["cpu_hashrate"] = [double]$Matches[2]
+                                $out["gpu_hashrate"] = [double]$Matches[3]
                                 $out["submitted"]    = [int]$Matches[4]
                                 $out["accepted"]     = [int]$Matches[5]
                                 $out["rejected"]     = [int]$Matches[6]

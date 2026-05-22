@@ -937,7 +937,10 @@
                 ctx.fillText('Waiting for data...', w / 2, h / 2);
                 return;
             }
-            const maxVal = Math.max(...hashrateHistory.map(p => p.value), 1) * 1.1;
+            const hasGpu = hashrateHistory.some(p => (p.gpu || 0) > 0);
+            const maxVal = Math.max(...hashrateHistory.flatMap(p => [p.total || p.value || 0, p.cpu || 0, p.gpu || 0]), 1) * 1.1;
+
+            // Grid lines + y-axis labels
             ctx.strokeStyle = 'rgba(255,255,255,0.04)';
             ctx.lineWidth = 1;
             for (let i = 0; i <= 4; i++) {
@@ -947,24 +950,59 @@
                 ctx.fillStyle = '#64748b'; ctx.font = '11px SF Mono, monospace'; ctx.textAlign = 'right';
                 ctx.fillText(val, padding.left - 8, y + 4);
             }
-            ctx.beginPath();
-            ctx.strokeStyle = 'hsl(270, 80%, 65%)';
-            ctx.lineWidth = 2; ctx.lineJoin = 'round';
-            hashrateHistory.forEach((point, i) => {
-                const x = padding.left + (i / (hashrateHistory.length - 1)) * chartW;
-                const y = padding.top + chartH - (point.value / maxVal) * chartH;
-                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-            });
-            ctx.stroke();
-            ctx.lineTo(padding.left + chartW, padding.top + chartH);
-            ctx.lineTo(padding.left, padding.top + chartH);
-            ctx.closePath();
-            const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
-            gradient.addColorStop(0, 'hsla(270, 80%, 65%, 0.15)');
-            gradient.addColorStop(1, 'hsla(270, 80%, 65%, 0)');
-            ctx.fillStyle = gradient; ctx.fill();
-            ctx.fillStyle = '#64748b'; ctx.font = '11px Inter, sans-serif'; ctx.textAlign = 'center';
-            ctx.fillText('H/s', padding.left + chartW / 2, h - 5);
+
+            // Helper: draw one series line, optionally filled
+            function drawSeries(key, color, lineWidth, filled) {
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = lineWidth;
+                ctx.lineJoin = 'round';
+                hashrateHistory.forEach((point, i) => {
+                    const val = (point[key] !== undefined ? point[key] : point.value) || 0;
+                    const x = padding.left + (i / (hashrateHistory.length - 1)) * chartW;
+                    const y = padding.top + chartH - (val / maxVal) * chartH;
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                });
+                ctx.stroke();
+                if (filled) {
+                    ctx.lineTo(padding.left + chartW, padding.top + chartH);
+                    ctx.lineTo(padding.left, padding.top + chartH);
+                    ctx.closePath();
+                    const gr = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
+                    gr.addColorStop(0, color.replace('hsl(', 'hsla(').replace(')', ', 0.12)'));
+                    gr.addColorStop(1, color.replace('hsl(', 'hsla(').replace(')', ', 0)'));
+                    ctx.fillStyle = gr; ctx.fill();
+                }
+            }
+
+            // Total (purple, filled area behind others)
+            drawSeries('total', 'hsl(270, 80%, 65%)', 2, true);
+
+            if (hasGpu) {
+                // CPU (blue) and GPU (teal) as thinner lines on top
+                drawSeries('cpu', 'hsl(210, 80%, 65%)', 1.5, false);
+                drawSeries('gpu', 'hsl(160, 75%, 55%)', 1.5, false);
+
+                // Legend
+                const legend = [
+                    { label: 'Total', color: 'hsl(270, 80%, 65%)' },
+                    { label: 'CPU',   color: 'hsl(210, 80%, 65%)' },
+                    { label: 'GPU',   color: 'hsl(160, 75%, 55%)' }
+                ];
+                ctx.font = '11px Inter, sans-serif';
+                let lx = padding.left;
+                legend.forEach(item => {
+                    ctx.fillStyle = item.color;
+                    ctx.fillRect(lx, h - 20, 14, 2.5);
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(item.label, lx + 18, h - 14);
+                    lx += 18 + ctx.measureText(item.label).width + 16;
+                });
+            } else {
+                ctx.fillStyle = '#64748b'; ctx.font = '11px Inter, sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('H/s', padding.left + chartW / 2, h - 5);
+            }
         }
 
         // ── Local pool stats ────────────────────────────────────────
@@ -1247,7 +1285,7 @@
                 if (data.rejected > prevRejected) addLog(`Share rejected (${data.rejected} total)`, 'error');
                 lastRejected = data.rejected;
                 await updateEarnings(data);
-                hashrateHistory.push({ time: Date.now(), value: data.hashrate });
+                hashrateHistory.push({ time: Date.now(), total: data.hashrate, cpu: data.cpu_hashrate || 0, gpu: data.gpu_hashrate || 0 });
                 if (hashrateHistory.length > MAX_CHART_POINTS) hashrateHistory = hashrateHistory.slice(-MAX_CHART_POINTS);
                 drawChart();
             } catch (e) {
