@@ -911,7 +911,7 @@
                 modeEl.textContent = modes[data.mining_mode] || data.mining_mode;
             }
             const intEl = document.getElementById('gpuIntensityInfo');
-            if (intEl && data.gpu_intensity) intEl.textContent = data.gpu_intensity;
+            if (intEl && data.gpu_intensity !== undefined) intEl.textContent = data.gpu_intensity;
 
             updateDailyEarnings(data.accepted, data.uptime);
             updateStale(data.rejected ?? 0, data.submitted);

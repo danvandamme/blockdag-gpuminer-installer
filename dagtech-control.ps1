@@ -388,20 +388,27 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                 $cfg = Read-Config
                 $minerRunning = $null -ne (Get-MinerProcess)
                 $runningStr   = if ($minerRunning) { "true" } else { "false" }
+                # Derive mining_mode from config
+                $miningMode = if     ($cfg["MINING_MODE"])        { $cfg["MINING_MODE"] }
+                              elseif ($cfg["GPU_ENABLED"] -eq "1") { "both" }
+                              else                                  { "cpu" }
+
                 $out = @{
-                    wallet       = if ($cfg["WALLET"])             { $cfg["WALLET"] }                                   else { "" }
-                    worker       = if ($cfg["WORKER_NAME"])        { $cfg["WORKER_NAME"] }                              else { "" }
-                    pool         = if ($cfg["POOL_HOST"])          { $cfg["POOL_HOST"] + ":" + $cfg["POOL_PORT"] }      else { "" }
-                    threads      = if ($cfg["THREADS"])            { [int]$cfg["THREADS"] }                             else { 0 }
-                    version      = if ($cfg["INSTALLER_VERSION"])  { $cfg["INSTALLER_VERSION"] }                        else { "" }
-                    job_id       = ""
-                    hashrate     = 0.0
-                    accepted     = 0
-                    submitted    = 0
-                    rejected     = 0
-                    uptime       = 0
-                    total_hashes = 0
-                    difficulty   = 0.0
+                    wallet        = if ($cfg["WALLET"])             { $cfg["WALLET"] }                                   else { "" }
+                    worker        = if ($cfg["WORKER_NAME"])        { $cfg["WORKER_NAME"] }                              else { "" }
+                    pool          = if ($cfg["POOL_HOST"])          { $cfg["POOL_HOST"] + ":" + $cfg["POOL_PORT"] }      else { "" }
+                    threads       = if ($cfg["THREADS"])            { [int]$cfg["THREADS"] }                             else { 0 }
+                    version       = if ($cfg["INSTALLER_VERSION"])  { $cfg["INSTALLER_VERSION"] }                        else { "" }
+                    gpu_intensity = if ($cfg["GPU_INTENSITY"])      { [int]$cfg["GPU_INTENSITY"] }                       else { 80 }
+                    mining_mode   = $miningMode
+                    job_id        = ""
+                    hashrate      = 0.0
+                    accepted      = 0
+                    submitted     = 0
+                    rejected      = 0
+                    uptime        = 0
+                    total_hashes  = 0
+                    difficulty    = 0.0
                 }
                 $logFile = Join-Path $script:LOGDIR "miner_$(Get-Date -Format 'yyyy-MM-dd').log"
                 if (Test-Path $logFile) {
@@ -413,8 +420,9 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                         $lines = $content -split "`r?`n"
                         $foundStats = $false
                         $foundDiff  = $false
+                        $foundJob   = $false
                         for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-                            if ($foundStats -and $foundDiff) { break }
+                            if ($foundStats -and $foundDiff -and $foundJob) { break }
                             $line = $lines[$i]
                             # Match GPU stats line: X.XX H/s | CPU: Y H/s | GPU: Z H/s | Shares: ...
                             if (-not $foundStats -and $line -match '\[DagTech\]\s+([\d.]+)\s+H/s\s+\|\s+CPU:\s+([\d.]+)\s+H/s\s+\|\s+GPU:\s+([\d.]+)\s+H/s\s+\|\s+Shares:\s+(\d+)/(\d+)/(\d+).*Uptime:\s+(\d+)h(\d+)m') {
@@ -443,6 +451,10 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                             if (-not $foundDiff -and $line -match '\[DagTech\]\s+Difficulty:\s+([\d.]+)') {
                                 $out["difficulty"] = [double]$Matches[1]
                                 $foundDiff = $true
+                            }
+                            if (-not $foundJob -and $line -match '\[DagTech\]\s+New job:\s+(\S+)') {
+                                $out["job_id"] = $Matches[1]
+                                $foundJob = $true
                             }
                         }
                     } catch {}
