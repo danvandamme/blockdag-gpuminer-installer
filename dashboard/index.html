@@ -594,9 +594,9 @@
         <div class="stats-grid">
             <!-- Row 1: Mining stats -->
             <div class="stat-card">
-                <div class="stat-label">Hash Rate</div>
+                <div class="stat-label">Total Hash Rate</div>
                 <div class="stat-value blue" id="hashrate">0.0 <span class="stat-unit">H/s</span></div>
-                <div class="stat-sub" id="hashrateGpu"></div>
+                <div class="stat-sub" id="hashrateSubTotal"></div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Shares Submitted</div>
@@ -623,11 +623,19 @@
                 <div class="stat-value" id="uptime">0:00</div>
                 <div class="stat-sub" id="totalHashes">0 total hashes</div>
             </div>
-            <!-- Row 2: Earnings & system stats -->
+            <!-- Row 2: System & per-source hashrate -->
             <div class="stat-card">
-                <div class="stat-label">Est. Daily Earnings</div>
-                <div class="stat-value blue" id="dailyEarnings">-- <span class="stat-unit">BDAG</span></div>
-                <div class="stat-sub" id="dailyEarningsSub">Based on shares/uptime</div>
+                <div class="stat-label">CPU / GPU Hash Rate</div>
+                <div style="display:flex;gap:18px;align-items:flex-start;margin-top:4px;">
+                    <div>
+                        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">CPU</div>
+                        <div class="stat-value blue" id="cpuHashrateVal" style="font-size:18px;">-- <span class="stat-unit">H/s</span></div>
+                    </div>
+                    <div>
+                        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">GPU</div>
+                        <div class="stat-value purple" id="gpuHashrateVal" style="font-size:18px;">-- <span class="stat-unit">H/s</span></div>
+                    </div>
+                </div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Memory Usage</div>
@@ -654,45 +662,6 @@
                 <div class="stat-value purple" id="gpuTemp">-- <span class="stat-unit">°C</span></div>
                 <div class="stat-sub" id="gpuTempStatus">Waiting...</div>
             </div>
-            <!-- Blocks found — full width row -->
-            <div class="stat-card stat-card-blocks" id="blocksCard">
-                <div class="blocks-icon" id="blocksIcon">&#9935;</div>
-                <div class="blocks-main">
-                    <div class="blocks-count" id="blocksCount">0 blocks found</div>
-                    <div class="blocks-sub" id="blocksSub">No blocks found yet — keep mining!</div>
-                </div>
-                <div class="blocks-recent" id="blocksRecent"></div>
-            </div>
-        </div>
-
-        <!-- BDAG Earnings Comparison -->
-        <div class="earnings-section">
-            <div class="earnings-section-title">BDAG Earnings Comparison</div>
-            <div class="earnings-grid">
-                <div class="earnings-card">
-                    <div class="earnings-card-title">Miner Reported</div>
-                    <div class="earnings-card-source">Source: /metrics endpoint</div>
-                    <div class="earnings-value" id="bdagMiner">-- <span class="earnings-unit">BDAG</span></div>
-                    <div class="earnings-status pending" id="bdagMinerStatus">Waiting for data...</div>
-                </div>
-                <div class="earnings-card">
-                    <div class="earnings-card-title">Pool API</div>
-                    <div class="earnings-card-source" id="bdagPoolSource">Source: pool API</div>
-                    <div class="earnings-value" id="bdagPool">-- <span class="earnings-unit">BDAG</span></div>
-                    <div class="earnings-status pending" id="bdagPoolStatus">Waiting for wallet...</div>
-                </div>
-                <div class="earnings-card">
-                    <div class="earnings-card-title">Local Estimate</div>
-                    <div class="earnings-card-source">Source: accepted shares × rate</div>
-                    <div class="earnings-value" id="bdagEstimate">-- <span class="earnings-unit">BDAG</span></div>
-                    <div class="earnings-status pending" id="bdagEstimateStatus">Waiting for shares...</div>
-                    <div class="earnings-rate-row">
-                        <span class="earnings-rate-label">BDAG / share:</span>
-                        <input class="earnings-rate-input" type="number" id="rewardPerShare" value="0.001" min="0" step="0.0001">
-                    </div>
-                    <div id="rateSourceLine" style="font-size:11px;color:var(--text-dim);margin-top:4px;min-height:14px;"></div>
-                </div>
-            </div>
         </div>
 
         <!-- Hashrate Chart -->
@@ -703,6 +672,46 @@
             </div>
             <div class="chart-container">
                 <canvas id="hashrateChart"></canvas>
+            </div>
+        </div>
+
+        <!-- BDAG Earnings -->
+        <div class="earnings-section">
+            <div class="earnings-section-title">BDAG Earnings</div>
+            <div class="earnings-grid">
+                <!-- Blocks Found -->
+                <div class="earnings-card" id="blocksCard">
+                    <div class="earnings-card-title">Blocks Found</div>
+                    <div class="earnings-card-source">Source: pool stats</div>
+                    <div class="earnings-value">
+                        <span id="blocksCount" style="color:var(--text-primary)">0</span>
+                        <span class="earnings-unit">blocks</span>
+                    </div>
+                    <div class="earnings-status pending" id="blocksSub">No blocks found yet — keep mining!</div>
+                    <div style="font-size:12px;color:var(--text-secondary);margin-top:10px;min-height:30px;line-height:1.6;" id="blocksRecent"></div>
+                </div>
+                <!-- Est. Daily Earnings -->
+                <div class="earnings-card">
+                    <div class="earnings-card-title">Est. Daily Earnings</div>
+                    <div class="earnings-card-source">Source: shares ÷ uptime × rate</div>
+                    <div class="earnings-value" id="dailyEarnings">-- <span class="earnings-unit">BDAG</span></div>
+                    <div class="earnings-status pending" id="dailyEarningsSub">Based on shares/uptime</div>
+                </div>
+                <!-- Local Estimate -->
+                <div class="earnings-card">
+                    <div class="earnings-card-title">Local Estimate</div>
+                    <div class="earnings-card-source">Source: accepted shares × rate</div>
+                    <div class="earnings-value" id="bdagEstimate">-- <span class="earnings-unit">BDAG</span></div>
+                    <div class="earnings-status pending" id="bdagEstimateStatus">Waiting for shares...</div>
+                    <div class="earnings-rate-row">
+                        <span class="earnings-rate-label">BDAG / share:</span>
+                        <input class="earnings-rate-input" type="number" id="rewardPerShare" value="0.001" min="0" step="0.0001">
+                    </div>
+                    <div id="rateSourceLine" style="font-size:11px;color:var(--text-dim);margin-top:4px;min-height:14px;"></div>
+                    <div style="font-size:11px;color:var(--text-dim);margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.05);line-height:1.5;">
+                        &#9888; Local Estimate only &mdash; this rate is projected from your accepted shares and may differ from actual block rewards. Earnings are confirmed when a block is found.
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -873,13 +882,15 @@
             els.version.textContent    = data.version || '--';
             els.threads.textContent    = data.threads;
 
-            // GPU-specific fields from /metrics
-            if (data.gpu_hashrate !== undefined) {
-                const ghEl = document.getElementById('gpuHashrateInfo');
-                if (ghEl) ghEl.textContent = data.gpu_hashrate ? data.gpu_hashrate.toFixed(1) + ' H/s' : '0.0 H/s';
-                const subEl = document.getElementById('hashrateGpu');
-                if (subEl && data.gpu_hashrate) subEl.textContent = `GPU: ${data.gpu_hashrate.toFixed(1)} H/s`;
-            }
+            // CPU / GPU per-source hashrate card
+            const cpuHrEl = document.getElementById('cpuHashrateVal');
+            const gpuHrEl = document.getElementById('gpuHashrateVal');
+            if (cpuHrEl) cpuHrEl.innerHTML = `${(data.cpu_hashrate || 0).toFixed(1)} <span class="stat-unit">H/s</span>`;
+            if (gpuHrEl) gpuHrEl.innerHTML = `${(data.gpu_hashrate || 0).toFixed(1)} <span class="stat-unit">H/s</span>`;
+
+            // GPU info card
+            const ghEl = document.getElementById('gpuHashrateInfo');
+            if (ghEl) ghEl.textContent = data.gpu_hashrate ? data.gpu_hashrate.toFixed(1) + ' H/s' : '0.0 H/s';
             const modeEl = document.getElementById('miningMode');
             if (modeEl && data.mining_mode) {
                 const modes = { cpu: 'CPU Only', gpu: 'GPU Only', both: 'CPU + GPU' };
@@ -1036,30 +1047,32 @@
 
         function updateBlocksCard(stats) {
             const card   = document.getElementById('blocksCard');
-            const icon   = document.getElementById('blocksIcon');
             const count  = document.getElementById('blocksCount');
             const sub    = document.getElementById('blocksSub');
             const recent = document.getElementById('blocksRecent');
             if (!card) return;
             const n = stats.total_blocks || 0;
             if (n === 0) {
-                card.classList.remove('blocks-found');
-                icon.textContent = '⛏'; count.textContent = '0 blocks found'; count.classList.remove('green');
-                sub.textContent = 'No blocks found yet — keep mining!'; recent.textContent = '';
+                card.style.borderColor = ''; card.style.background = ''; card.style.boxShadow = '';
+                count.textContent = '0'; count.style.color = 'var(--text-primary)';
+                sub.textContent = 'No blocks found yet — keep mining!';
+                sub.className = 'earnings-status pending';
+                recent.textContent = '';
                 return;
             }
-            card.classList.add('blocks-found');
-            icon.textContent = '🎉';
-            count.textContent = `${n} block${n !== 1 ? 's' : ''} found`;
-            count.classList.add('green');
+            card.style.borderColor = 'hsla(142, 71%, 45%, 0.5)';
+            card.style.background  = 'hsla(142, 71%, 45%, 0.06)';
+            card.style.boxShadow   = '0 0 24px hsla(142, 71%, 45%, 0.1)';
+            count.textContent = n; count.style.color = 'hsl(142, 71%, 55%)';
             sub.textContent = `${(stats.total_reward_bdag || 0).toFixed(4)} BDAG earned`;
+            sub.className = 'earnings-status ok';
             const recents = stats.recent_blocks || [];
             if (recents.length > 0) {
                 const last = recents[0];
                 const height = last.height ? `#${last.height}` : '';
                 const reward = last.reward_bdag != null ? ` · ${parseFloat(last.reward_bdag).toFixed(2)} BDAG` : '';
                 const when   = last.created_at ? last.created_at.slice(0, 16) : '';
-                recent.innerHTML = `Last block${height}${reward}<br><span style="color:var(--text-dim)">${when}</span>`;
+                recent.innerHTML = `Last block ${height}${reward}<br><span style="color:var(--text-dim)">${when}</span>`;
             } else { recent.textContent = ''; }
         }
 
@@ -1081,15 +1094,18 @@
 
         function updateDailyEarnings(accepted, uptime) {
             const rate = parseFloat(document.getElementById('rewardPerShare').value) || 0;
+            const sub  = document.getElementById('dailyEarningsSub');
             if (!rate || !uptime || !accepted) {
-                document.getElementById('dailyEarnings').innerHTML = `-- <span class="stat-unit">BDAG</span>`;
-                document.getElementById('dailyEarningsSub').textContent = 'Based on shares/uptime';
+                document.getElementById('dailyEarnings').innerHTML = `-- <span class="earnings-unit">BDAG</span>`;
+                sub.textContent = 'Based on shares/uptime';
+                sub.className = 'earnings-status pending';
                 return;
             }
             const sharesPerSec = accepted / uptime;
             const daily = sharesPerSec * 86400 * rate;
-            document.getElementById('dailyEarnings').innerHTML = `${daily.toFixed(2)} <span class="stat-unit">BDAG</span>`;
-            document.getElementById('dailyEarningsSub').textContent = `~${(sharesPerSec * 3600).toFixed(2)} shares/hr`;
+            document.getElementById('dailyEarnings').innerHTML = `${daily.toFixed(2)} <span class="earnings-unit">BDAG</span>`;
+            sub.textContent = `~${(sharesPerSec * 3600).toFixed(2)} shares/hr`;
+            sub.className = 'earnings-status ok';
         }
 
         function timeAgo(ts) {
@@ -1237,33 +1253,6 @@
 
         document.getElementById('rewardPerShare').addEventListener('input', () => { updateEstimate(lastAccepted); });
 
-        async function updateEarnings(data) {
-            const mEl = document.getElementById('bdagMiner');
-            const mSt = document.getElementById('bdagMinerStatus');
-            if (data.bdag_earned !== undefined && data.bdag_earned !== null) {
-                mEl.innerHTML = `${parseFloat(data.bdag_earned).toFixed(4)} <span class="earnings-unit">BDAG</span>`;
-                mSt.textContent = 'Reported by miner'; mSt.className = 'earnings-status ok';
-            } else {
-                mEl.innerHTML = `-- <span class="earnings-unit">BDAG</span>`;
-                mSt.textContent = 'Field not in /metrics response'; mSt.className = 'earnings-status err';
-            }
-            updateEstimate(data.accepted);
-            const now = Date.now();
-            if (data.wallet && (data.wallet !== lastPoolFetchWallet || now - lastPoolFetchTime >= POOL_FETCH_INTERVAL)) {
-                lastPoolFetchWallet = data.wallet;
-                lastPoolFetchTime = now;
-                const poolHost = extractPoolHost(data.pool || '');
-                const pSrc = document.getElementById('bdagPoolSource');
-                const pEl  = document.getElementById('bdagPool');
-                const pSt  = document.getElementById('bdagPoolStatus');
-                pSt.textContent = 'Fetching from pool...'; pSt.className = 'earnings-status pending';
-                pSrc.textContent = poolHost ? `Source: ${poolHost}` : 'Source: pool API';
-                if (!poolHost) { pEl.innerHTML = `-- <span class="earnings-unit">BDAG</span>`; pSt.textContent = 'Could not parse pool host'; pSt.className = 'earnings-status err'; return; }
-                const result = await fetchPoolBDAG(data.wallet, poolHost);
-                if (result) { pEl.innerHTML = `${result.value.toFixed(4)} <span class="earnings-unit">BDAG</span>`; pSt.textContent = 'Fetched from pool API'; pSt.className = 'earnings-status ok'; }
-                else { pEl.innerHTML = `-- <span class="earnings-unit">BDAG</span>`; pSt.textContent = 'Pool API unavailable or unsupported'; pSt.className = 'earnings-status err'; }
-            }
-        }
 
         // ── Main poll loop ──────────────────────────────────────────
 
@@ -1284,7 +1273,7 @@
                 }
                 if (data.rejected > prevRejected) addLog(`Share rejected (${data.rejected} total)`, 'error');
                 lastRejected = data.rejected;
-                await updateEarnings(data);
+                updateEstimate(data.accepted);
                 hashrateHistory.push({ time: Date.now(), total: data.hashrate, cpu: data.cpu_hashrate || 0, gpu: data.gpu_hashrate || 0 });
                 if (hashrateHistory.length > MAX_CHART_POINTS) hashrateHistory = hashrateHistory.slice(-MAX_CHART_POINTS);
                 drawChart();
