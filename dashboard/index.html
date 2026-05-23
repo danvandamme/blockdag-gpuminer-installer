@@ -563,12 +563,13 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">GPU Intensity <span style="color:var(--gpu-primary)">(0 = lowest, 100 = max)</span></label>
+                    <label class="form-label">GPU Load Intensity</label>
                     <div class="intensity-row">
                         <input class="intensity-slider" type="range" id="cfgGpuIntensity" min="0" max="100" value="80"
-                               oninput="document.getElementById('intensityVal').textContent=this.value">
+                               oninput="document.getElementById('intensityVal').textContent=this.value; updateIntensityHint(this.value)">
                         <span class="intensity-label" id="intensityVal">80</span>
                     </div>
+                    <div id="intensityHint" style="margin-top:7px;font-size:11px;line-height:1.5;padding:7px 10px;border-radius:6px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.05);"></div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Mining Mode</label>
@@ -1377,6 +1378,43 @@
             catch (e) { alert('Could not open log window. Is the control server running?'); }
         }
 
+        function updateIntensityHint(val) {
+            val = parseInt(val);
+            const el = document.getElementById('intensityHint');
+            if (!el) return;
+            let color, badge, vram, desc, rec;
+            if (val <= 30) {
+                color  = 'hsl(142, 72%, 50%)';
+                badge  = '&#9679; Conservative';
+                vram   = '~1 GB VRAM';
+                desc   = 'Low GPU load — reduced hashrate but runs cool and quiet.';
+                rec    = 'Good for: 2 GB GPUs, shared workstation PCs, or leaving headroom for other GPU tasks.';
+            } else if (val <= 60) {
+                color  = 'hsl(210, 80%, 65%)';
+                badge  = '&#9679; Balanced';
+                vram   = '~2 GB VRAM';
+                desc   = 'Moderate GPU load — solid hashrate without pushing thermals.';
+                rec    = 'Good for: 4 GB GPUs, 24/7 rigs, or any system where stability matters more than peak speed.';
+            } else if (val <= 85) {
+                color  = 'hsl(45, 100%, 60%)';
+                badge  = '&#9679; Performance';
+                vram   = '~3–4 GB VRAM';
+                desc   = 'High GPU load — near-maximum hashrate. Monitor temperatures.';
+                rec    = 'Recommended default (80). Requires a 4 GB+ GPU. Reduce if you see crashes or GPU errors in logs.';
+            } else {
+                color  = '#f87171';
+                badge  = '&#9679; Maximum';
+                vram   = '6 GB+ VRAM';
+                desc   = 'Full GPU load — highest possible hashrate, maximum heat and power draw.';
+                rec    = 'Only for 6 GB+ GPUs with good cooling. May cause instability on mid-range cards.';
+            }
+            el.innerHTML =
+                `<span style="color:${color};font-weight:600;">${badge}</span>` +
+                `<span style="color:var(--text-dim);margin-left:8px;">&#128190; ${vram}</span><br>` +
+                `<span style="color:var(--text-secondary);">${desc}</span><br>` +
+                `<span style="color:var(--text-dim);">${rec}</span>`;
+        }
+
         function setMode(mode) {
             ['cpu','gpu','both'].forEach(m => {
                 const btn = document.getElementById('mode' + m.charAt(0).toUpperCase() + m.slice(1));
@@ -1403,6 +1441,7 @@
                 const intensity = cfg.GPU_INTENSITY || '80';
                 document.getElementById('cfgGpuIntensity').value = intensity;
                 document.getElementById('intensityVal').textContent = intensity;
+                updateIntensityHint(intensity);
                 setMode(cfg.MINING_MODE || 'both');
             } catch (e) {
                 const s = document.getElementById('configStatus');

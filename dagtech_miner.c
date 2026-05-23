@@ -85,7 +85,7 @@
 /* =========================================================================
  * DagTech GPU Miner Configuration
  * ========================================================================= */
-#define DAGTECH_VERSION       "GPU-2026.0522.2"
+#define DAGTECH_VERSION       "GPU-2026.0523.1"
 #define DAGTECH_BANNER        "DagTech GPU Miner v" DAGTECH_VERSION " - dagtech.network"
 #define DAGTECH_AUTHOR        "Dawie Nel / DagTech Ltd"
 #define DAGTECH_DEFAULT_POOL  "excalibur.dagtech.network"
@@ -129,6 +129,7 @@ static uint64_t total_hashes    = 0;
 static uint64_t total_submitted = 0;
 static uint64_t total_accepted  = 0;
 static uint64_t total_rejected  = 0;
+static uint64_t total_stale     = 0;
 static double   current_hashrate = 0.0;
 static double   cpu_hashrate     = 0.0;
 static double   gpu_hashrate     = 0.0;
@@ -890,12 +891,23 @@ static void dagtech_parse_stratum(const char *line) {
         pthread_mutex_unlock(&stats_mtx);
         printf("[DagTech] Share ACCEPTED (%lu total)\n", (unsigned long)total_accepted);
     }
-    /* Share rejected */
+    /* Share rejected — error code 21 = "Job not found" = stale (job expired
+       before submit arrived). Stales are normal; actual rejects are a problem. */
     else if (strstr(line, "\"error\":[")) {
+        int is_stale = strstr(line, "\"21\"") || strstr(line, ",21,") ||
+                       strstr(line, "[21,")  || strstr(line, "stale") ||
+                       strstr(line, "job not found");
         pthread_mutex_lock(&stats_mtx);
-        total_rejected++;
-        pthread_mutex_unlock(&stats_mtx);
-        printf("[DagTech] Share REJECTED: %s\n", line);
+        if (is_stale) {
+            total_stale++;
+            pthread_mutex_unlock(&stats_mtx);
+            printf("[DagTech] Share stale (job expired) (%lu total stale)\n",
+                   (unsigned long)total_stale);
+        } else {
+            total_rejected++;
+            pthread_mutex_unlock(&stats_mtx);
+            printf("[DagTech] Share REJECTED: %s\n", line);
+        }
     }
 }
 
@@ -1193,6 +1205,7 @@ static void *dagtech_metrics_thread(void *arg) {
             "\"version\":\"%s\","
             "\"pool\":\"%s:%d\","
             "\"wallet\":\"%.10s...%s\","
+            "\"worker\":\"%s\","
             "\"threads\":%d,"
             "\"hashrate\":%.2f,"
             "\"cpu_hashrate\":%.2f,"
@@ -1201,6 +1214,7 @@ static void *dagtech_metrics_thread(void *arg) {
             "\"submitted\":%" DT_PRIu64 ","
             "\"accepted\":%" DT_PRIu64 ","
             "\"rejected\":%" DT_PRIu64 ","
+            "\"stale\":%" DT_PRIu64 ","
             "\"difficulty\":%.8f,"
             "\"uptime\":%ld,"
             "\"job_id\":\"%s\","
@@ -1208,11 +1222,13 @@ static void *dagtech_metrics_thread(void *arg) {
             "}",
             DAGTECH_VERSION, pool_host, pool_port,
             wallet, wallet + strlen(wallet) - 4,
+            worker_name,
             num_threads, current_hashrate, cpu_hashrate, gpu_hashrate,
             (unsigned long long)total_hashes,
             (unsigned long long)total_submitted,
             (unsigned long long)total_accepted,
             (unsigned long long)total_rejected,
+            (unsigned long long)total_stale,
             current_difficulty, (long)uptime,
             current_job.job_id,
             (gpu_enabled == 1) ? 1 : 0);
@@ -1413,6 +1429,11 @@ static int dagtech_detect_threads(void) {
  * Main Entry Point - DagTech GPU Miner
  * ========================================================================= */
 int main(int argc, char **argv) {
+    /* Flush log lines immediately — prevents output appearing in bursts when
+       stdout is not a terminal (e.g. running as a background service). */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IOLBF, 0);
+
     signal(SIGINT, dagtech_signal);
     signal(SIGTERM, dagtech_signal);
 
@@ -1652,18 +1673,20 @@ int main(int argc, char **argv) {
 
                 if (gpu_enabled == 1) {
                     printf("[DagTech] %.2f H/s | CPU: %.2f H/s | GPU: %.2f H/s | "
-                           "Shares: %lu/%lu/%lu (sub/acc/rej) | Uptime: %dh%dm\n",
+                           "Shares: %lu/%lu/%lu/%lu (sub/acc/rej/stale) | Uptime: %dh%dm\n",
                            current_hashrate, cpu_hashrate, gpu_hashrate,
                            (unsigned long)total_submitted,
                            (unsigned long)total_accepted,
                            (unsigned long)total_rejected,
+                           (unsigned long)total_stale,
                            up_h, up_m);
                 } else {
-                    printf("[DagTech] %.1f H/s | Shares: %lu/%lu/%lu (sub/acc/rej) | Uptime: %dh%dm\n",
+                    printf("[DagTech] %.1f H/s | Shares: %lu/%lu/%lu/%lu (sub/acc/rej/stale) | Uptime: %dh%dm\n",
                            current_hashrate,
                            (unsigned long)total_submitted,
                            (unsigned long)total_accepted,
                            (unsigned long)total_rejected,
+                           (unsigned long)total_stale,
                            up_h, up_m);
                 }
 
