@@ -18,7 +18,7 @@ REM ============================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-set "VERSION=GPU-2026.0524.7"
+set "VERSION=GPU-2026.0524.8"
 set "INSTALL_DIR=C:\dagtech-gpu-miner"
 set "BIN_DIR=%INSTALL_DIR%\bin"
 set "DASHBOARD_DIR=%INSTALL_DIR%\dashboard"
@@ -294,6 +294,7 @@ if exist "%CONFIG_FILE%" (
         if "%%k"=="THREADS"      set "DEF_THREADS=%%l"
         if "%%k"=="POOL_PASSWORD" set "DEF_PASSWORD=%%l"
         if "%%k"=="GPU_INTENSITY" set "DEF_GPU_INT=%%l"
+        if "%%k"=="START_MODE"    set "DEF_START_MODE=%%l"
     )
     echo [GPU Miner] Loaded defaults from existing config.
 )
@@ -399,6 +400,22 @@ echo   CPU Threads : %THREADS%
 echo   GPU Intensity: %GPU_INT%
 echo.
 
+REM ---- Start mode -----------------------------------------------------------
+set "START_MODE_CHOICE=service"
+if defined DEF_START_MODE set "START_MODE_CHOICE=!DEF_START_MODE!"
+echo   How should the miner start?
+echo     [1] System service  - starts at boot, runs as SYSTEM (no login needed)
+echo     [2] At login        - starts when you log in, runs as you (terminal log window)
+echo.
+if /i "!START_MODE_CHOICE!"=="login" (
+    set /p "SM_INPUT=  Choice (default: 2): "
+) else (
+    set /p "SM_INPUT=  Choice (default: 1): "
+)
+if "!SM_INPUT!"=="2" ( set "START_MODE_CHOICE=login" ) else if "!SM_INPUT!"=="1" ( set "START_MODE_CHOICE=service" )
+echo   Start mode: !START_MODE_CHOICE!
+echo.
+
 REM ============================================================================
 REM 5. Create directories
 REM ============================================================================
@@ -487,6 +504,7 @@ echo GPU_ENABLED=1
 echo GPU_INTENSITY=!GPU_INT!
 echo GPU_PLATFORM=0
 echo GPU_DEVICE=0
+echo START_MODE=!START_MODE_CHOICE!
 ) > "%CONFIG_FILE%"
 echo [GPU Miner] Config saved.
 
@@ -522,7 +540,7 @@ REM ============================================================================
 REM 9. Install launcher scripts
 REM ============================================================================
 echo [GPU Miner] Installing launcher scripts...
-for %%f in (dagtech-start.bat dagtech-stop.bat dagtech-status.bat) do (
+for %%f in (dagtech-start.bat dagtech-stop.bat dagtech-status.bat dagtech-logs.bat) do (
     if exist "%~dp0%%f" (
         copy /y "%~dp0%%f" "%BIN_DIR%\%%f" >nul
     )
@@ -556,17 +574,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$d=[Environment]::GetFolderPath('Desktop'); $lnk=Join-Path $d 'DagTech GPU Miner - Uninstall.lnk'; $s=(New-Object -COM WScript.Shell).CreateShortcut($lnk); $s.TargetPath='%BIN_DIR%\dagtech-uninstall.bat'; $s.WorkingDirectory='%BIN_DIR%'; $s.Description='Uninstall DagTech GPU Miner'; $s.Save()"
 if not errorlevel 1 echo [GPU Miner] Desktop shortcut created: "DagTech GPU Miner - Uninstall"
 
+REM -- Logs shortcut --
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$d=[Environment]::GetFolderPath('Desktop'); $lnk=Join-Path $d 'DagTech GPU Miner - Logs.lnk'; $s=(New-Object -COM WScript.Shell).CreateShortcut($lnk); $s.TargetPath='%BIN_DIR%\dagtech-logs.bat'; $s.WorkingDirectory='%BIN_DIR%'; $s.Description='View DagTech GPU Miner live log'; $s.Save()"
+if not errorlevel 1 echo [GPU Miner] Desktop shortcut created: "DagTech GPU Miner - Logs"
+
 REM ============================================================================
-REM 12. Auto-start at boot via Task Scheduler (runs as SYSTEM, no login needed)
+REM 12. Auto-start via Task Scheduler
 REM ============================================================================
 echo.
-echo   [GPU Miner] Registering auto-start scheduled task (runs at boot as SYSTEM)...
 
 REM Remove old Startup-folder shortcut if present
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$lnk=[IO.Path]::Combine($env:APPDATA,'Microsoft\Windows\Start Menu\Programs\Startup\DagTech GPU Miner.lnk'); if (Test-Path $lnk) { Remove-Item $lnk -Force; Write-Host '[GPU Miner] Removed old startup shortcut.' }" 2>nul
 
-REM Register Task Scheduler task
-REM  Each "..." segment closes before the ^ so CMD line-continuation works outside quotes
+REM Stop existing task and control server before re-registering
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Stop-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue;" ^
+    "$pidFile='%INSTALL_DIR%\logs\control.pid';" ^
+    "if (Test-Path $pidFile) { try { $p=Get-Process -Id ([int](Get-Content $pidFile -Raw).Trim()) -ErrorAction Stop; $p | Stop-Process -Force; Start-Sleep -Milliseconds 800 } catch {} }" ^
+    "Get-Process -Name powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*dagtech-control*' } | Stop-Process -Force -ErrorAction SilentlyContinue" 2>nul
+
+if /i "!START_MODE_CHOICE!"=="login" goto :task_login
+
+:task_service
+echo   [GPU Miner] Registering auto-start scheduled task (system service, starts at boot)...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$bd='%BIN_DIR%';" ^
     "$arg='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \"' + $bd + '\dagtech-control.ps1\"';" ^
@@ -576,9 +607,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$p=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest;" ^
     "Unregister-ScheduledTask -TaskName 'DagTech GPU Miner' -Confirm:$false -ErrorAction SilentlyContinue;" ^
     "$null=Register-ScheduledTask -TaskName 'DagTech GPU Miner' -Action $a -Trigger $t -Settings $s -Principal $p -Force;" ^
+    "Remove-Item '%INSTALL_DIR%\logs\.stop' -Force -ErrorAction SilentlyContinue;" ^
     "$st=Get-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue;" ^
-    "if ($st) { Start-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue; Write-Host ('[GPU Miner] Task registered and started. State: ' + $st.State) } else { Write-Host '[GPU Miner] ERROR: Task registration failed - try running installer as Administrator.' }"
+    "if ($st) { Start-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue; Write-Host ('[GPU Miner] Task registered and started (service). State: ' + $st.State) } else { Write-Host '[GPU Miner] ERROR: Task registration failed - try running installer as Administrator.' }"
 if errorlevel 1 echo [GPU Miner] WARNING: Could not register scheduled task - run installer as Administrator.
+goto :task_done
+
+:task_login
+echo   [GPU Miner] Registering auto-start scheduled task (login mode, starts at logon)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$bd='%BIN_DIR%';" ^
+    "$arg='-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \"' + $bd + '\dagtech-control.ps1\"';" ^
+    "$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg;" ^
+    "$t=New-ScheduledTaskTrigger -AtLogOn -User ($env:USERDOMAIN + '\' + $env:USERNAME);" ^
+    "$s=New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Days 3650) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1);" ^
+    "$p=New-ScheduledTaskPrincipal -UserId ($env:USERDOMAIN + '\' + $env:USERNAME) -LogonType Interactive -RunLevel Highest;" ^
+    "Unregister-ScheduledTask -TaskName 'DagTech GPU Miner' -Confirm:$false -ErrorAction SilentlyContinue;" ^
+    "$null=Register-ScheduledTask -TaskName 'DagTech GPU Miner' -Action $a -Trigger $t -Settings $s -Principal $p -Force;" ^
+    "Remove-Item '%INSTALL_DIR%\logs\.stop' -Force -ErrorAction SilentlyContinue;" ^
+    "$st=Get-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue;" ^
+    "if ($st) { Start-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue; Write-Host ('[GPU Miner] Task registered and started (login). State: ' + $st.State) } else { Write-Host '[GPU Miner] ERROR: Task registration failed - try running installer as Administrator.' }"
+
+:task_done
 
 REM Disable sleep/hibernate so the miner never stops due to power management
 powercfg /change standby-timeout-ac 0 >nul 2>&1
@@ -597,6 +647,7 @@ echo.
 echo   Desktop shortcuts created:
 echo     "DagTech GPU Miner"             - starts mining
 echo     "DagTech GPU Miner - Stop"      - stops mining
+echo     "DagTech GPU Miner - Logs"      - view live log in terminal
 echo     "DagTech GPU Miner - Uninstall" - removes miner completely
 echo.
 echo   Dashboard (while mining):

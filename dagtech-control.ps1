@@ -15,6 +15,13 @@ $PIDFILE           = Join-Path $BaseDir "logs\control.pid"
 if (-not (Test-Path $script:LOGDIR)) { New-Item -ItemType Directory -Path $script:LOGDIR | Out-Null }
 [System.IO.File]::WriteAllText($PIDFILE, "$PID")
 
+$script:StartMode = "service"
+if (Test-Path $script:CONFIG) {
+    Get-Content $script:CONFIG | ForEach-Object {
+        if ($_ -match '^START_MODE=(.+)$') { $script:StartMode = $Matches[1].Trim() }
+    }
+}
+
 try { $host.UI.RawUI.WindowTitle = "DagTech GPU Miner Control Server" } catch {}
 
 function Write-Log([string]$msg) {
@@ -165,7 +172,7 @@ while ($listener.IsListening) {
             "/status" {
                 $running = ($null -ne (Get-MinerProcess)).ToString().ToLower()
                 $stopped = (Test-Path $script:STOPFILE).ToString().ToLower()
-                Send-Response $ctx ('{"running":' + $running + ',"stopped":' + $stopped + '}')
+                Send-Response $ctx ('{"running":' + $running + ',"stopped":' + $stopped + ',"start_mode":"' + $script:StartMode + '"}')
                 break
             }
             "/start" {
@@ -265,6 +272,10 @@ while ($listener.IsListening) {
                 break
             }
             "/open-logs" {
+                if ($script:StartMode -ne "login") {
+                    Send-Response $ctx '{"ok":false,"terminal":false}'
+                    break
+                }
                 $logFile = Join-Path $script:LOGDIR "miner_$(Get-Date -Format 'yyyy-MM-dd').log"
                 $cmd = @"
 `$Host.UI.RawUI.WindowTitle = 'DagTech GPU Miner - Live Log'
@@ -288,7 +299,31 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
 }
 "@
                 Start-Process powershell -ArgumentList "-NoProfile", "-NoExit", "-Command", $cmd
-                Send-Response $ctx '{"ok":true}'
+                Send-Response $ctx '{"ok":true,"terminal":true}'
+                break
+            }
+            "/logs" {
+                $tail = 200
+                try {
+                    $qs = $ctx.Request.Url.Query
+                    if ($qs -match '[?&]tail=(\d+)') { $tail = [int]$Matches[1] }
+                } catch {}
+                $logFile = Join-Path $script:LOGDIR "miner_$(Get-Date -Format 'yyyy-MM-dd').log"
+                $lines = @()
+                if (Test-Path $logFile) {
+                    try {
+                        $fs = New-Object System.IO.FileStream($logFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                        $reader = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+                        $content = $reader.ReadToEnd()
+                        $reader.Close(); $fs.Close()
+                        $all = ($content -split "`r?`n") | Where-Object { $_ -ne '' }
+                        $lines = if ($all.Count -gt $tail) { $all[($all.Count - $tail)..($all.Count - 1)] } else { $all }
+                    } catch { $lines = @("Error reading log: $($_.Exception.Message)") }
+                } else {
+                    $lines = @("No log file for today yet.")
+                }
+                $escaped = $lines | ForEach-Object { '"' + ($_ -replace '\\','\\' -replace '"','\"') + '"' }
+                Send-Response $ctx ('[' + ($escaped -join ',') + ']')
                 break
             }
             "/sysinfo" {
