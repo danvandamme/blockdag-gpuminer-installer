@@ -18,7 +18,7 @@ REM ============================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-set "VERSION=GPU-2026.0524.6"
+set "VERSION=GPU-2026.0524.7"
 set "INSTALL_DIR=C:\dagtech-gpu-miner"
 set "BIN_DIR=%INSTALL_DIR%\bin"
 set "DASHBOARD_DIR=%INSTALL_DIR%\dashboard"
@@ -576,7 +576,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$p=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest;" ^
     "Unregister-ScheduledTask -TaskName 'DagTech GPU Miner' -Confirm:$false -ErrorAction SilentlyContinue;" ^
     "$null=Register-ScheduledTask -TaskName 'DagTech GPU Miner' -Action $a -Trigger $t -Settings $s -Principal $p -Force;" ^
-    "Write-Host '[GPU Miner] Scheduled task registered.'"
+    "$st=Get-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue;" ^
+    "if ($st) { Start-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue; Write-Host ('[GPU Miner] Task registered and started. State: ' + $st.State) } else { Write-Host '[GPU Miner] ERROR: Task registration failed - try running installer as Administrator.' }"
 if errorlevel 1 echo [GPU Miner] WARNING: Could not register scheduled task - run installer as Administrator.
 
 REM Disable sleep/hibernate so the miner never stops due to power management
