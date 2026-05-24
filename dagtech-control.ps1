@@ -511,6 +511,7 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                     accepted         = 0
                     submitted        = 0
                     rejected         = 0
+                    stale            = 0
                     uptime           = 0
                     total_hashes     = 0
                     difficulty       = 0.0
@@ -535,25 +536,27 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                             if ($foundStats -and $foundDiff -and $foundJob) { break }
                             $line = $lines[$i]
                             # Match GPU stats line: X.XX H/s | CPU: Y H/s | GPU: Z H/s | Shares: ...
-                            if (-not $foundStats -and $line -match '\[DagTech\]\s+([\d.]+)\s+H/s\s+\|\s+CPU:\s+([\d.]+)\s+H/s\s+\|\s+GPU:\s+([\d.]+)\s+H/s\s+\|\s+Shares:\s+(\d+)/(\d+)/(\d+).*Uptime:\s+(\d+)h(\d+)m') {
+                            if (-not $foundStats -and $line -match '\[DagTech\]\s+([\d.]+)\s+H/s\s+\|\s+CPU:\s+([\d.]+)\s+H/s\s+\|\s+GPU:\s+([\d.]+)\s+H/s\s+\|\s+Shares:\s+(\d+)/(\d+)/(\d+)/(\d+).*Uptime:\s+(\d+)h(\d+)m') {
                                 $out["hashrate"]     = [double]$Matches[1]
                                 $out["cpu_hashrate"] = [double]$Matches[2]
                                 $out["gpu_hashrate"] = [double]$Matches[3]
                                 $out["submitted"]    = [int]$Matches[4]
                                 $out["accepted"]     = [int]$Matches[5]
                                 $out["rejected"]     = [int]$Matches[6]
-                                $uptimeSec           = [int]$Matches[7] * 3600 + [int]$Matches[8] * 60
+                                $out["stale"]        = [int]$Matches[7]
+                                $uptimeSec           = [int]$Matches[8] * 3600 + [int]$Matches[9] * 60
                                 $out["uptime"]       = $uptimeSec
                                 $out["total_hashes"] = [long]($out["hashrate"] * $uptimeSec)
                                 $foundStats = $true
                             }
                             # Also match CPU-only stats line
-                            if (-not $foundStats -and $line -match '\[DagTech\]\s+([\d.]+)\s+H/s\s+\|\s+Shares:\s+(\d+)/(\d+)/(\d+).*Uptime:\s+(\d+)h(\d+)m') {
+                            if (-not $foundStats -and $line -match '\[DagTech\]\s+([\d.]+)\s+H/s\s+\|\s+Shares:\s+(\d+)/(\d+)/(\d+)/(\d+).*Uptime:\s+(\d+)h(\d+)m') {
                                 $out["hashrate"]     = [double]$Matches[1]
                                 $out["submitted"]    = [int]$Matches[2]
                                 $out["accepted"]     = [int]$Matches[3]
                                 $out["rejected"]     = [int]$Matches[4]
-                                $uptimeSec           = [int]$Matches[5] * 3600 + [int]$Matches[6] * 60
+                                $out["stale"]        = [int]$Matches[5]
+                                $uptimeSec           = [int]$Matches[6] * 3600 + [int]$Matches[7] * 60
                                 $out["uptime"]       = $uptimeSec
                                 $out["total_hashes"] = [long]($out["hashrate"] * $uptimeSec)
                                 $foundStats = $true

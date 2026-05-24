@@ -655,16 +655,21 @@
                 <div class="stat-sub" id="staleRate">0% of submitted</div>
             </div>
             <div class="stat-card">
+                <div class="stat-label">Stale Shares</div>
+                <div class="stat-value" id="staleCount">0</div>
+                <div class="stat-sub" id="staleCountRate">0% of submitted</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-label">Last Share</div>
                 <div class="stat-value" id="lastShareAge">--</div>
                 <div class="stat-sub" id="lastShareTime">No share yet</div>
             </div>
+            <!-- Row 2: System & per-source hashrate -->
             <div class="stat-card">
                 <div class="stat-label">Uptime</div>
                 <div class="stat-value" id="uptime">0:00</div>
                 <div class="stat-sub" id="totalHashes">0 total hashes</div>
             </div>
-            <!-- Row 2: System & per-source hashrate -->
             <div class="stat-card">
                 <div class="stat-label">CPU / GPU Hash Rate</div>
                 <div style="display:flex;gap:18px;align-items:flex-start;margin-top:4px;">
@@ -982,6 +987,7 @@
 
             updateDailyEarnings(data.accepted, data.uptime);
             updateStale(data.rejected ?? 0, data.submitted);
+            updateStaleCount(data.stale ?? 0, data.submitted);
             if (isLocalPool(data.pool)) startLocalPoolPoll(); else stopLocalPoolPoll();
             applyPoolRate();
         }
@@ -1174,17 +1180,19 @@
         // ── Daily Earnings ──────────────────────────────────────────
 
         function updateDailyEarnings(accepted, uptime) {
+            const el = document.getElementById('dailyEarnings');
+            if (!el) return;
             const rate = parseFloat(document.getElementById('rewardPerShare').value) || 0;
             const sub  = document.getElementById('dailyEarningsSub');
             if (!rate || !uptime || !accepted) {
-                document.getElementById('dailyEarnings').innerHTML = `-- <span class="earnings-unit">BDAG</span>`;
+                el.innerHTML = `-- <span class="earnings-unit">BDAG</span>`;
                 sub.textContent = 'Based on shares/uptime';
                 sub.className = 'earnings-status pending';
                 return;
             }
             const sharesPerSec = accepted / uptime;
             const daily = sharesPerSec * 86400 * rate;
-            document.getElementById('dailyEarnings').innerHTML = `${daily.toFixed(2)} <span class="earnings-unit">BDAG</span>`;
+            el.innerHTML = `${daily.toFixed(2)} <span class="earnings-unit">BDAG</span>`;
             sub.textContent = `~${(sharesPerSec * 3600).toFixed(2)} shares/hr`;
             sub.className = 'earnings-status ok';
         }
@@ -1268,6 +1276,15 @@
             const pct = submitted > 0 ? ((rejected / submitted) * 100).toFixed(1) : '0.0';
             el.className = pct > 20 ? 'stat-value red' : pct > 5 ? 'stat-value yellow' : 'stat-value';
             document.getElementById('staleRate').textContent = `${pct}% of submitted`;
+        }
+
+        function updateStaleCount(stale, submitted) {
+            const el = document.getElementById('staleCount');
+            if (!el) return;
+            el.textContent = stale ?? 0;
+            const pct = submitted > 0 ? ((stale / submitted) * 100).toFixed(1) : '0.0';
+            el.className = pct > 5 ? 'stat-value yellow' : 'stat-value';
+            document.getElementById('staleCountRate').textContent = `${pct}% of submitted`;
         }
 
         function updateCpuUsage(pct) {
