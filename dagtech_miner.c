@@ -1205,6 +1205,7 @@ static void *dagtech_metrics_thread(void *arg) {
             "\"version\":\"%s\","
             "\"pool\":\"%s:%d\","
             "\"wallet\":\"%.10s...%s\","
+            "\"wallet_full\":\"%s\","
             "\"worker\":\"%s\","
             "\"threads\":%d,"
             "\"hashrate\":%.2f,"
@@ -1222,6 +1223,7 @@ static void *dagtech_metrics_thread(void *arg) {
             "}",
             DAGTECH_VERSION, pool_host, pool_port,
             wallet, wallet + strlen(wallet) - 4,
+            wallet,
             worker_name,
             num_threads, current_hashrate, cpu_hashrate, gpu_hashrate,
             (unsigned long long)total_hashes,

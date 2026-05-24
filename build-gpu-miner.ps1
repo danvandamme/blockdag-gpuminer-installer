@@ -1,4 +1,4 @@
-# build-gpu-miner.ps1 - Downloads OpenCL headers and MinGW if needed, compiles dagtech-gpu-miner.exe
+﻿# build-gpu-miner.ps1 - Downloads OpenCL headers and MinGW if needed, compiles dagtech-gpu-miner.exe
 $here = Split-Path $MyInvocation.MyCommand.Path
 $src  = Join-Path $here "dagtech_miner.c"
 $out  = Join-Path $here "dagtech-gpu-miner.exe"
