@@ -124,7 +124,7 @@ $compileArgs = @(
     "-DDAGTECH_GPU",
     "-I$includeDir",
     "-L$includeDir",
-    "-O2", "-march=native", "-Wall", "-D_WIN32_WINNT=0x0600",
+    "-O2", "-march=x86-64-v3", "-Wall", "-D_WIN32_WINNT=0x0600",
     "-o", $out, $src,
     "-lws2_32", "-lm", "-lkernel32", "-lOpenCL",
     "-static-libgcc", "-Wl,-Bstatic,-lpthread,-Bdynamic"

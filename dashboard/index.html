@@ -680,6 +680,21 @@
                 </div>
             </div>
             <div class="stat-card">
+                <div class="stat-label">CPU / GPU Shares</div>
+                <div style="display:flex;gap:18px;align-items:flex-start;margin-top:4px;">
+                    <div>
+                        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">CPU</div>
+                        <div class="stat-value blue" id="cpuSharesAccepted" style="font-size:18px;">--</div>
+                        <div id="cpuSharesSub" style="font-size:11px;color:var(--text-dim);margin-top:2px;">-- submitted</div>
+                    </div>
+                    <div>
+                        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">GPU</div>
+                        <div class="stat-value purple" id="gpuSharesAccepted" style="font-size:18px;">--</div>
+                        <div id="gpuSharesSub" style="font-size:11px;color:var(--text-dim);margin-top:2px;">-- submitted</div>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-label">Memory Usage</div>
                 <div class="stat-value" id="memUsage">-- <span class="stat-unit">MB</span></div>
                 <div class="stat-sub" id="memStatus">No data from miner</div>
@@ -969,6 +984,32 @@
             const gpuHrEl = document.getElementById('gpuHashrateVal');
             if (cpuHrEl) cpuHrEl.innerHTML = formatHashrate(data.cpu_hashrate || 0).html;
             if (gpuHrEl) gpuHrEl.innerHTML = formatHashrate(data.gpu_hashrate || 0).html;
+
+            // CPU / GPU per-source shares card
+            const cpuAcc = data.cpu_accepted ?? null;
+            const gpuAcc = data.gpu_accepted ?? null;
+            const cpuAccEl = document.getElementById('cpuSharesAccepted');
+            const gpuAccEl = document.getElementById('gpuSharesAccepted');
+            const cpuSubEl = document.getElementById('cpuSharesSub');
+            const gpuSubEl = document.getElementById('gpuSharesSub');
+            if (cpuAccEl) cpuAccEl.textContent = cpuAcc !== null ? cpuAcc : '--';
+            if (gpuAccEl) gpuAccEl.textContent = gpuAcc !== null ? gpuAcc : '--';
+            if (cpuSubEl) {
+                const sub = data.cpu_submitted ?? null;
+                const rej = data.cpu_rejected || 0;
+                const stl = data.cpu_stale || 0;
+                cpuSubEl.textContent = sub !== null
+                    ? sub + ' sub' + (rej ? ' · ' + rej + ' rej' : '') + (stl ? ' · ' + stl + ' stale' : '')
+                    : '-- submitted';
+            }
+            if (gpuSubEl) {
+                const sub = data.gpu_submitted ?? null;
+                const rej = data.gpu_rejected || 0;
+                const stl = data.gpu_stale || 0;
+                gpuSubEl.textContent = sub !== null
+                    ? sub + ' sub' + (rej ? ' · ' + rej + ' rej' : '') + (stl ? ' · ' + stl + ' stale' : '')
+                    : '-- submitted';
+            }
 
             // GPU info card
             const ghEl = document.getElementById('gpuHashrateInfo');
@@ -1357,8 +1398,8 @@
                 // with /metrics so we never rely on the control server version having
                 // the newer "running" field in the metrics response.
                 const [metricsResp, statusResp] = await Promise.all([
-                    fetch(METRICS_URL, { signal: AbortSignal.timeout(4000) }),
-                    fetch(`${CONTROL_URL}/status`, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+                    fetch(METRICS_URL, { signal: AbortSignal.timeout(10000) }),
+                    fetch(`${CONTROL_URL}/status`, { signal: AbortSignal.timeout(10000) }).catch(() => null)
                 ]);
 
                 const data = await metricsResp.json();

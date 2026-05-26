@@ -85,7 +85,7 @@
 /* =========================================================================
  * DagTech GPU Miner Configuration
  * ========================================================================= */
-#define DAGTECH_VERSION       "GPU-2026.0524.9"
+#define DAGTECH_VERSION       "GPU-2026.0525.3"
 #define DAGTECH_BANNER        "DagTech GPU Miner v" DAGTECH_VERSION " - dagtech.network"
 #define DAGTECH_AUTHOR        "Dawie Nel / DagTech Ltd"
 #define DAGTECH_DEFAULT_POOL  "excalibur.dagtech.network"
@@ -130,6 +130,22 @@ static uint64_t total_submitted = 0;
 static uint64_t total_accepted  = 0;
 static uint64_t total_rejected  = 0;
 static uint64_t total_stale     = 0;
+static uint64_t cpu_submitted   = 0;
+static uint64_t gpu_submitted   = 0;
+static uint64_t cpu_accepted    = 0;
+static uint64_t gpu_accepted    = 0;
+static uint64_t cpu_rejected    = 0;
+static uint64_t gpu_rejected    = 0;
+static uint64_t cpu_stale       = 0;
+static uint64_t gpu_stale       = 0;
+
+/* Pending submission ring buffer: maps submission id -> source (CPU=0, GPU=1)
+   so that pool accept/reject responses can be attributed to the right source. */
+#define PENDING_SUB_MAX 64
+static struct { uint64_t id; int is_gpu; } pending_subs[PENDING_SUB_MAX];
+static int pending_head  = 0;
+static int pending_count = 0;
+static pthread_mutex_t pending_mtx = PTHREAD_MUTEX_INITIALIZER;
 static double   current_hashrate = 0.0;
 static double   cpu_hashrate     = 0.0;
 static double   gpu_hashrate     = 0.0;
@@ -625,9 +641,16 @@ static void *dagtech_gpu_thread(void *arg) {
         cl_uint header_words[20];
         memcpy(header_words, header80, 80);
 
-        /* Compute 32-bit difficulty target: 0xFFFFFFFF / difficulty */
+        /* Compute 32-bit difficulty target matching the CPU's 64-bit check.
+         * CPU checks: hash_top64 <= 0x0000FFFF00000000 / difficulty
+         * hash_top64 upper 32 bits == hash[7] (BSWAP(ostate[7])), so the GPU
+         * pre-filter target is the upper 32 bits of that threshold.
+         * Using 0xFFFFFFFF/diff instead is ~1000x too lenient: atomic_min
+         * always picks a nonce near nonce_base that rarely passes the CPU check. */
         double diff = j.difficulty > 0.0 ? j.difficulty : 1.0;
-        cl_uint target32 = (cl_uint)(0x00000000FFFFFFFFull / diff);
+        double thresh_d = (double)0x0000FFFF00000000ULL / diff;
+        uint64_t thresh64 = (thresh_d >= 18446744073709551615.0) ? 0xFFFFFFFFFFFFFFFFULL : (uint64_t)thresh_d;
+        cl_uint target32 = (cl_uint)(thresh64 >> 32);
 
         /* Upload header to device */
         cl_mem header_buf = clCreateBuffer(g_ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
@@ -737,10 +760,6 @@ static void *dagtech_gpu_thread(void *arg) {
  * Stratum Protocol - DagTech Network Communication
  * ========================================================================= */
 static int dagtech_connect_pool(void) {
-    #ifdef _WIN32
-    WSADATA wsa;
-    WSAStartup(MAKEWORD(2,2), &wsa);
-    #endif
 
     struct addrinfo hints, *res, *rp;
     memset(&hints, 0, sizeof(hints));
@@ -886,25 +905,51 @@ static void dagtech_parse_stratum(const char *line) {
     /* Share accepted */
     else if (strstr(line, "\"result\"") && strstr(line, "true")
              && !strstr(line, "false") && !strstr(line, "\"error\":[")) {
+        /* Parse response id to attribute to CPU or GPU */
+        const char *idp = strstr(line, "\"id\":");
+        uint64_t resp_id = idp ? strtoull(idp + 5, NULL, 10) : (uint64_t)-1;
+        int src = -1;
+        pthread_mutex_lock(&pending_mtx);
+        for (int pi = 0; pi < pending_count; pi++) {
+            int idx = (pending_head + pi) % PENDING_SUB_MAX;
+            if (pending_subs[idx].id == resp_id) { src = pending_subs[idx].is_gpu; break; }
+        }
+        pthread_mutex_unlock(&pending_mtx);
         pthread_mutex_lock(&stats_mtx);
         total_accepted++;
+        if (src == 1) gpu_accepted++;
+        else if (src == 0) cpu_accepted++;
         pthread_mutex_unlock(&stats_mtx);
-        printf("[DagTech] Share ACCEPTED (%lu total)\n", (unsigned long)total_accepted);
+        printf("[DagTech] Share ACCEPTED (%lu total | CPU:%lu GPU:%lu)\n",
+               (unsigned long)total_accepted,
+               (unsigned long)cpu_accepted,
+               (unsigned long)gpu_accepted);
     }
     /* Share rejected — error code 21 = "Job not found" = stale (job expired
        before submit arrived). Stales are normal; actual rejects are a problem. */
     else if (strstr(line, "\"error\":[")) {
+        const char *idp = strstr(line, "\"id\":");
+        uint64_t resp_id = idp ? strtoull(idp + 5, NULL, 10) : (uint64_t)-1;
+        int src = -1;
+        pthread_mutex_lock(&pending_mtx);
+        for (int pi = 0; pi < pending_count; pi++) {
+            int idx = (pending_head + pi) % PENDING_SUB_MAX;
+            if (pending_subs[idx].id == resp_id) { src = pending_subs[idx].is_gpu; break; }
+        }
+        pthread_mutex_unlock(&pending_mtx);
         int is_stale = strstr(line, "\"21\"") || strstr(line, ",21,") ||
                        strstr(line, "[21,")  || strstr(line, "stale") ||
                        strstr(line, "job not found");
         pthread_mutex_lock(&stats_mtx);
         if (is_stale) {
             total_stale++;
+            if (src == 1) gpu_stale++;    else if (src == 0) cpu_stale++;
             pthread_mutex_unlock(&stats_mtx);
             printf("[DagTech] Share stale (job expired) (%lu total stale)\n",
                    (unsigned long)total_stale);
         } else {
             total_rejected++;
+            if (src == 1) gpu_rejected++; else if (src == 0) cpu_rejected++;
             pthread_mutex_unlock(&stats_mtx);
             printf("[DagTech] Share REJECTED: %s\n", line);
         }
@@ -991,7 +1036,7 @@ static uint64_t dagtech_now_ms(void) {
 #endif
 }
 
-static void dagtech_submit_share(const DagTechJob *j, uint32_t nonce) {
+static void dagtech_submit_share(const DagTechJob *j, uint32_t nonce, int is_gpu) {
     /* Throttle: skip if we submitted too recently */
     uint64_t now_ms = dagtech_now_ms();
     pthread_mutex_lock(&submit_rate_mtx);
@@ -1011,20 +1056,32 @@ static void dagtech_submit_share(const DagTechJob *j, uint32_t nonce) {
     nb[3] = (nonce >> 24) & 0xff;
     bytes_to_hex(nb, 4, nonce_hex);
 
+    /* Capture and increment submission id before sending */
+    pthread_mutex_lock(&stats_mtx);
+    uint64_t sub_id = 1000 + total_submitted;
+    total_submitted++;
+    if (is_gpu) gpu_submitted++; else cpu_submitted++;
+    pthread_mutex_unlock(&stats_mtx);
+
+    /* Record pending so the pool response can be attributed to the right source */
+    pthread_mutex_lock(&pending_mtx);
+    int slot = (pending_head + pending_count) % PENDING_SUB_MAX;
+    pending_subs[slot].id     = sub_id;
+    pending_subs[slot].is_gpu = is_gpu;
+    if (pending_count < PENDING_SUB_MAX) pending_count++;
+    else pending_head = (pending_head + 1) % PENDING_SUB_MAX;
+    pthread_mutex_unlock(&pending_mtx);
+
     char buf[512];
     snprintf(buf, sizeof(buf),
         "{\"id\":%lu,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"00000000\",\"%s\",\"%s\"]}",
-        (unsigned long)(1000 + total_submitted), wallet, j->job_id, j->ntime, nonce_hex);
+        (unsigned long)sub_id, wallet, j->job_id, j->ntime, nonce_hex);
     dagtech_send(buf);
-
-    pthread_mutex_lock(&stats_mtx);
-    total_submitted++;
-    pthread_mutex_unlock(&stats_mtx);
 }
 
 /* External alias used by GPU thread (avoids forward-declaration complexity) */
 void dagtech_submit_share_ext(const DagTechJob *j, uint32_t nonce) {
-    dagtech_submit_share(j, nonce);
+    dagtech_submit_share(j, nonce, 1);  /* GPU */
 }
 
 static int dagtech_check_target(const uint8_t *hash, double difficulty) {
@@ -1080,7 +1137,7 @@ static void *dagtech_mine_thread(void *arg) {
 
             if (dagtech_check_target(hash, j.difficulty)) {
                 printf("[DagTech] ** SHARE FOUND ** CPU Worker %d, nonce=0x%08x\n", tid, nonce);
-                dagtech_submit_share(&j, nonce);
+                dagtech_submit_share(&j, nonce, 0);  /* CPU */
             }
 
             nonce++;
@@ -1199,7 +1256,7 @@ static void *dagtech_metrics_thread(void *arg) {
         /* Build JSON metrics response */
         pthread_mutex_lock(&stats_mtx);
         time_t uptime = time(NULL) - start_time;
-        char json[2048];
+        char json[3072];
         snprintf(json, sizeof(json),
             "{"
             "\"version\":\"%s\","
@@ -1216,6 +1273,14 @@ static void *dagtech_metrics_thread(void *arg) {
             "\"accepted\":%" DT_PRIu64 ","
             "\"rejected\":%" DT_PRIu64 ","
             "\"stale\":%" DT_PRIu64 ","
+            "\"cpu_submitted\":%" DT_PRIu64 ","
+            "\"gpu_submitted\":%" DT_PRIu64 ","
+            "\"cpu_accepted\":%" DT_PRIu64 ","
+            "\"gpu_accepted\":%" DT_PRIu64 ","
+            "\"cpu_rejected\":%" DT_PRIu64 ","
+            "\"gpu_rejected\":%" DT_PRIu64 ","
+            "\"cpu_stale\":%" DT_PRIu64 ","
+            "\"gpu_stale\":%" DT_PRIu64 ","
             "\"difficulty\":%.8f,"
             "\"uptime\":%ld,"
             "\"job_id\":\"%s\","
@@ -1231,6 +1296,14 @@ static void *dagtech_metrics_thread(void *arg) {
             (unsigned long long)total_accepted,
             (unsigned long long)total_rejected,
             (unsigned long long)total_stale,
+            (unsigned long long)cpu_submitted,
+            (unsigned long long)gpu_submitted,
+            (unsigned long long)cpu_accepted,
+            (unsigned long long)gpu_accepted,
+            (unsigned long long)cpu_rejected,
+            (unsigned long long)gpu_rejected,
+            (unsigned long long)cpu_stale,
+            (unsigned long long)gpu_stale,
             current_difficulty, (long)uptime,
             current_job.job_id,
             (gpu_enabled == 1) ? 1 : 0);
@@ -1583,6 +1656,12 @@ int main(int argc, char **argv) {
     printf("\n");
 
     start_time = time(NULL);
+
+    /* Initialise Winsock before any socket call (metrics thread or pool connect) */
+    #ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2,2), &wsa);
+    #endif
 
     /* Start metrics server thread */
     pthread_t metrics_tid;

@@ -394,22 +394,22 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
             "/sysinfo" {
                 $out = @{}
 
-                # CPU usage
+                # CPU usage — 2-second cap so a slow WMI call never blocks the server
                 try {
-                    $load = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+                    $load = (Get-CimInstance Win32_Processor -OperationTimeoutSec 2 | Measure-Object -Property LoadPercentage -Average).Average
                     $out["cpu_usage"] = [math]::Round([double]$load, 1)
                 } catch {}
 
                 # Memory
                 try {
-                    $os = Get-CimInstance Win32_OperatingSystem
+                    $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 2
                     $out["mem_used_mb"]  = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1024)
                     $out["mem_total_mb"] = [math]::Round($os.TotalVisibleMemorySize / 1024)
                 } catch {}
 
                 # Temperatures via LibreHardwareMonitor WMI
                 try {
-                    $lhmSensors = Get-CimInstance -Namespace root/OpenHardwareMonitor -ClassName Sensor -ErrorAction Stop |
+                    $lhmSensors = Get-CimInstance -Namespace root/OpenHardwareMonitor -ClassName Sensor -OperationTimeoutSec 2 -ErrorAction Stop |
                                   Where-Object { $_.SensorType -eq "Temperature" }
                     if ($lhmSensors) {
                         $cpuPkg = $lhmSensors | Where-Object { $_.Name -match "CPU Package|CPU Tdie|Tdie|Package" } | Select-Object -First 1
@@ -424,7 +424,7 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                 # CPU temperature fallback
                 if (-not $out.ContainsKey("cpu_temp")) {
                     try {
-                        $zones = Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop
+                        $zones = Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature -OperationTimeoutSec 2 -ErrorAction Stop
                         $temps = @($zones | ForEach-Object { ($_.CurrentTemperature - 2732) / 10.0 })
                         if ($temps.Count -gt 0) {
                             $out["cpu_temp"] = [math]::Round(($temps | Measure-Object -Maximum).Maximum, 1)
@@ -461,7 +461,7 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                 # GPU name + vendor via WMI
                 if (-not $out.ContainsKey("gpu_name")) {
                     try {
-                        $gpu = Get-WmiObject Win32_VideoController | Select-Object -First 1
+                        $gpu = Get-CimInstance Win32_VideoController -OperationTimeoutSec 2 | Select-Object -First 1
                         if ($gpu) {
                             $out["gpu_name"] = $gpu.Name
                             if ($gpu.Name -match "NVIDIA") { $out["gpu_vendor"] = "nvidia" }
@@ -471,12 +471,20 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                     } catch {}
                 }
 
-                # GPU usage fallback
+                # GPU usage fallback via Windows perf counters — run in a background job with a
+                # 2-second timeout so a slow counter never blocks the synchronous request loop.
                 if (-not $out.ContainsKey("gpu_usage")) {
                     try {
-                        $sample = Get-Counter '\GPU Engine(*engtype_3D*)\Utilization Percentage' -ErrorAction Stop
-                        $usage = ($sample.CounterSamples | Measure-Object -Property CookedValue -Sum).Sum
-                        $out["gpu_usage"] = [math]::Round([double]$usage, 1)
+                        $gpuJob = Start-Job {
+                            $s = Get-Counter '\GPU Engine(*engtype_3D*)\Utilization Percentage' -ErrorAction Stop
+                            ($s.CounterSamples | Measure-Object -Property CookedValue -Sum).Sum
+                        }
+                        $null = $gpuJob | Wait-Job -Timeout 2
+                        if ($gpuJob.State -eq 'Completed') {
+                            $usage = Receive-Job $gpuJob -ErrorAction SilentlyContinue
+                            if ($null -ne $usage) { $out["gpu_usage"] = [math]::Round([double]$usage, 1) }
+                        }
+                        Remove-Job $gpuJob -Force
                     } catch {}
                 }
 
@@ -517,6 +525,14 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                     difficulty       = 0.0
                     cpu_shares_found = 0
                     gpu_shares_found = 0
+                    cpu_submitted    = 0
+                    gpu_submitted    = 0
+                    cpu_accepted     = 0
+                    gpu_accepted     = 0
+                    cpu_rejected     = 0
+                    gpu_rejected     = 0
+                    cpu_stale        = 0
+                    gpu_stale        = 0
                 }
                 $logFile = Join-Path $script:LOGDIR "miner_$(Get-Date -Format 'yyyy-MM-dd').log"
                 if (Test-Path $logFile) {
@@ -572,6 +588,24 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                         }
                     } catch {}
                 }
+                # Fetch per-source share stats from the miner's metrics HTTP endpoint
+                # Use HttpWebRequest directly — Invoke-WebRequest can hang indefinitely in
+                # scheduled-task context despite TimeoutSec; HttpWebRequest honours Timeout always.
+                $metricsPort = if ($cfg["METRICS_PORT"]) { $cfg["METRICS_PORT"] } else { "8882" }
+                try {
+                    $wr = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$metricsPort/metrics")
+                    $wr.Timeout = 2000
+                    $wr.ReadWriteTimeout = 2000
+                    $wr.Method = "GET"
+                    $wr.Proxy = $null
+                    $resp   = $wr.GetResponse()
+                    $reader = [System.IO.StreamReader]::new($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+                    $mj     = $reader.ReadToEnd() | ConvertFrom-Json
+                    $reader.Close(); $resp.Close()
+                    foreach ($f in @("cpu_submitted","gpu_submitted","cpu_accepted","gpu_accepted","cpu_rejected","gpu_rejected","cpu_stale","gpu_stale")) {
+                        if ($null -ne $mj.$f) { $out[$f] = [long]$mj.$f }
+                    }
+                } catch {}
                 $kvs = @('"running":' + $runningStr)
                 foreach ($k in $out.Keys) {
                     $v = $out[$k]

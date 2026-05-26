@@ -18,7 +18,7 @@ REM ============================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-set "VERSION=GPU-2026.0524.13"
+set "VERSION=GPU-2026.0525.3"
 set "INSTALL_DIR=C:\dagtech-gpu-miner"
 set "BIN_DIR=%INSTALL_DIR%\bin"
 set "DASHBOARD_DIR=%INSTALL_DIR%\dashboard"
@@ -52,6 +52,15 @@ REM ============================================================================
 echo [GPU Miner] Configuring Windows Defender exclusions...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-MpPreference -ExclusionPath '%INSTALL_DIR%' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '%~dp0' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '%BIN_DIR%\dagtech-gpu-miner.exe' -ErrorAction SilentlyContinue" >nul 2>&1
 echo [GPU Miner] Defender exclusions set.
+
+REM ============================================================================
+REM 0b-2. Power plan - switch to High Performance for maximum mining throughput.
+REM       Balanced plan throttles clock speeds and can cut hash rate by 60-75%.
+REM ============================================================================
+echo [GPU Miner] Setting High Performance power plan...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" >nul 2>&1
+echo [GPU Miner] Power plan set to High Performance.
 
 REM ============================================================================
 REM 0c. Firewall rule for miner metrics (port 8882)
@@ -281,7 +290,7 @@ set "DEF_POOL=excalibur.dagtech.network"
 set "DEF_PORT=3334"
 set "DEF_WORKER=dagtech"
 set "DEF_THREADS="
-set "DEF_GPU_INT=80"
+set "DEF_GPU_INT=35"
 if exist "%CONFIG_FILE%" (
     for /f "tokens=1,* delims==" %%k in (%CONFIG_FILE%) do (
         if "%%k"=="WALLET"       set "DEF_WALLET=%%l"
@@ -327,7 +336,7 @@ echo.
 set /p "WORKER_INPUT=  Worker name (default: %DEF_WORKER%): "
 if "%WORKER_INPUT%"=="" (set "WORKER=%DEF_WORKER%") else (set "WORKER=%WORKER_INPUT%")
 
-set /a "DEFAULT_THREADS=%CPU_CORES% / 2"
+set /a "DEFAULT_THREADS=%CPU_CORES%"
 if %DEFAULT_THREADS% LSS 1 set "DEFAULT_THREADS=1"
 if defined DEF_THREADS set "DEFAULT_THREADS=%DEF_THREADS%"
 echo.
@@ -355,24 +364,19 @@ if "!GPU_VRAM_MB!"=="0" (
     for /f "tokens=*" %%v in ('powershell -NoProfile -Command "try { $g=Get-WmiObject Win32_VideoController ^| Where-Object { $_.AdapterRAM -gt 1GB } ^| Sort-Object AdapterRAM -Desc ^| Select-Object -First 1; if($g){ [int]($g.AdapterRAM/1MB) }else{ 0 } } catch { 0 }" 2^>nul') do set "GPU_VRAM_MB=%%v"
 )
 
-REM Map VRAM -> recommended intensity (0-100; each step ~doubles GPU work items: 2^14..2^20)
-set "REC_GPU_INT=60"
+REM Calculate recommended intensity from V-buffer formula:
+REM   V-buffer = 2^E * 128 KB, where E = floor(14 + intensity/100*6 + 0.5)
+REM   Target: use up to 75%% of VRAM so the buffer fits with headroom.
+set "REC_GPU_INT=35"
 if "!GPU_VRAM_MB!"=="0" goto :vram_fallback
-set "REC_GPU_INT=40"
-if !GPU_VRAM_MB! GEQ 1500  set "REC_GPU_INT=55"
-if !GPU_VRAM_MB! GEQ 2000  set "REC_GPU_INT=65"
-if !GPU_VRAM_MB! GEQ 4000  set "REC_GPU_INT=75"
-if !GPU_VRAM_MB! GEQ 6000  set "REC_GPU_INT=80"
-if !GPU_VRAM_MB! GEQ 8000  set "REC_GPU_INT=85"
-if !GPU_VRAM_MB! GEQ 10000 set "REC_GPU_INT=90"
-if !GPU_VRAM_MB! GEQ 16000 set "REC_GPU_INT=95"
+for /f "tokens=*" %%i in ('powershell -NoProfile -Command "$v=[long]'!GPU_VRAM_MB!'; $t=$v*1048576*0.75; $e=[Math]::Floor([Math]::Log($t/131072)/[Math]::Log(2)); if($e -lt 14){$e=14}; $i=[int][Math]::Floor(($e-13.5)*100.0/6.0-0.001); if($i -lt 5){$i=5}; if($i -gt 95){$i=95}; $i" 2^>nul') do set "REC_GPU_INT=%%i"
 if not "!GPU_VRAM_NAME!"=="" echo   GPU  : !GPU_VRAM_NAME!
-echo   VRAM : !GPU_VRAM_MB! MB  ^-^>  recommended intensity: !REC_GPU_INT!
-echo   ^(Higher = more GPU work items. Reduce if you see out-of-memory errors.^)
+echo   VRAM : !GPU_VRAM_MB! MB  -^>  recommended intensity: !REC_GPU_INT!
+echo   ^(At this intensity the V-buffer uses ~75%% of VRAM. Reduce if GPU shows 0 H/s.^)
 set "DEF_GPU_INT=!REC_GPU_INT!"
 goto :vram_done
 :vram_fallback
-echo [GPU Miner] Could not detect VRAM. Using default intensity !REC_GPU_INT!.
+echo [GPU Miner] Could not detect VRAM - using safe default intensity !REC_GPU_INT!.
 set "DEF_GPU_INT=!REC_GPU_INT!"
 :vram_done
 
@@ -449,7 +453,7 @@ echo [GPU Miner] Compiling from source with GPU support...
 copy /y "%CL_FILE%" "%BIN_DIR%\dagtech_gpu.cl" >nul 2>&1
 echo [GPU Miner] OpenCL kernel installed.
 
-gcc -DDAGTECH_GPU -I"%OPENCL_HEADERS_DIR%" -L"%OPENCL_HEADERS_DIR%" -O2 -march=native -Wall -D_WIN32_WINNT=0x0600 -o "%BIN_DIR%\dagtech-gpu-miner.exe" "%SRC_FILE%" -lws2_32 -lm -lkernel32 -lOpenCL -static-libgcc -Wl,-Bstatic,-lpthread,-Bdynamic
+gcc -DDAGTECH_GPU -I"%OPENCL_HEADERS_DIR%" -L"%OPENCL_HEADERS_DIR%" -O2 -march=x86-64-v3 -Wall -D_WIN32_WINNT=0x0600 -o "%BIN_DIR%\dagtech-gpu-miner.exe" "%SRC_FILE%" -lws2_32 -lm -lkernel32 -lOpenCL -static-libgcc -Wl,-Bstatic,-lpthread,-Bdynamic
 
 if errorlevel 1 (
     echo [GPU Miner] Compile failed - keeping bundled binary if available.
