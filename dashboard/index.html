@@ -1489,6 +1489,7 @@
                     const esc = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                     if (/SHARE FOUND/i.test(line))                         return `<span style="color:hsl(142,72%,55%)">${esc}</span>`;
                     if (/\[DagTech GPU\]/.test(line))                      return `<span style="color:hsl(270,80%,65%)">${esc}</span>`;
+                    if (/\[DagTech CPU\]/.test(line))                      return `<span style="color:hsl(142,72%,50%)">${esc}</span>`;
                     if (/ERROR|error|failed|FAILED/i.test(line))           return `<span style="color:#f87171">${esc}</span>`;
                     if (/WARN|warn/i.test(line))                           return `<span style="color:hsl(45,100%,60%)">${esc}</span>`;
                     if (/Starting miner|Control server|Watchdog/i.test(line)) return `<span style="color:var(--blue-light)">${esc}</span>`;
