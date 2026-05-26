@@ -109,6 +109,7 @@ function Build-MinerArgList([hashtable]$cfg) {
     if ($gpuEnabled -eq "1") {
         $argList.Add("--gpu")
         if ($cfg["GPU_INTENSITY"]) { $argList.Add("--gpu-intensity"); $argList.Add($cfg["GPU_INTENSITY"]) }
+        if ($cfg["GPU_THROTTLE"])  { $argList.Add("--gpu-throttle");  $argList.Add($cfg["GPU_THROTTLE"]) }
         if ($cfg["GPU_PLATFORM"])  { $argList.Add("--gpu-platform");  $argList.Add($cfg["GPU_PLATFORM"]) }
         if ($cfg["GPU_DEVICE"])    { $argList.Add("--gpu-device");    $argList.Add($cfg["GPU_DEVICE"]) }
     } elseif ($gpuEnabled -eq "0") {
@@ -297,10 +298,11 @@ while ($listener.IsListening) {
                 $cfg = Read-Config
                 $gpuEnabled  = if ($cfg["GPU_ENABLED"])   { $cfg["GPU_ENABLED"] -eq "1" } else { $false }
                 $gpuIntensity= if ($cfg["GPU_INTENSITY"]) { [int]$cfg["GPU_INTENSITY"] }  else { 80 }
+                $gpuThrottle = if ($cfg["GPU_THROTTLE"])  { [int]$cfg["GPU_THROTTLE"] }   else { 100 }
                 $gpuPlatform = if ($cfg["GPU_PLATFORM"])  { [int]$cfg["GPU_PLATFORM"] }   else { 0 }
                 $gpuDevice   = if ($cfg["GPU_DEVICE"])    { [int]$cfg["GPU_DEVICE"] }     else { 0 }
                 $enabledStr  = if ($gpuEnabled) { "true" } else { "false" }
-                Send-Response $ctx ('{"gpu_enabled":' + $enabledStr + ',"gpu_intensity":' + $gpuIntensity + ',"gpu_platform":' + $gpuPlatform + ',"gpu_device":' + $gpuDevice + '}')
+                Send-Response $ctx ('{"gpu_enabled":' + $enabledStr + ',"gpu_intensity":' + $gpuIntensity + ',"gpu_throttle":' + $gpuThrottle + ',"gpu_platform":' + $gpuPlatform + ',"gpu_device":' + $gpuDevice + '}')
                 break
             }
             "/open-logs" {
@@ -544,6 +546,7 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                     threads       = if ($cfg["THREADS"])            { [int]$cfg["THREADS"] }                             else { 0 }
                     version       = if ($cfg["INSTALLER_VERSION"])  { $cfg["INSTALLER_VERSION"] }                        else { "" }
                     gpu_intensity = if ($cfg["GPU_INTENSITY"])      { [int]$cfg["GPU_INTENSITY"] }                       else { 80 }
+                    gpu_throttle  = if ($cfg["GPU_THROTTLE"])       { [int]$cfg["GPU_THROTTLE"] }                        else { 100 }
                     mining_mode   = $miningMode
                     job_id           = ""
                     hashrate         = 0.0

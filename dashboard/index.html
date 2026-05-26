@@ -503,7 +503,7 @@
         .btn-modal-save:hover:not(:disabled) { opacity: 0.85; }
         .btn-modal-save:disabled { opacity: 0.4; cursor: not-allowed; }
 
-        /* GPU intensity slider */
+        /* GPU sliders (intensity / throttle) */
         .intensity-row { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
         .intensity-slider {
             flex: 1;
@@ -606,13 +606,23 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">GPU Load Intensity</label>
+                    <label class="form-label">VRAM / Work Size <span style="font-size:10px;opacity:0.55;font-weight:400;">(GPU_INTENSITY)</span></label>
                     <div class="intensity-row">
                         <input class="intensity-slider" type="range" id="cfgGpuIntensity" min="0" max="100" value="80"
                                oninput="document.getElementById('intensityVal').textContent=this.value; updateIntensityHint(this.value)">
                         <span class="intensity-label" id="intensityVal">80</span>
                     </div>
                     <div id="intensityHint" style="margin-top:7px;font-size:11px;line-height:1.5;padding:7px 10px;border-radius:6px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.05);"></div>
+                </div>
+                <div class="form-group" style="margin-top:14px;">
+                    <label class="form-label">GPU Core Throttle % <span style="font-size:10px;opacity:0.55;font-weight:400;">(100% = full speed)</span></label>
+                    <div class="intensity-row">
+                        <input class="intensity-slider" type="range" id="cfgGpuThrottle" min="5" max="100" value="100"
+                               style="accent-color:hsl(142,60%,45%)"
+                               oninput="document.getElementById('throttleVal').textContent=this.value+'%'; updateThrottleHint(this.value)">
+                        <span class="intensity-label" id="throttleVal">100%</span>
+                    </div>
+                    <div id="throttleHint" style="margin-top:7px;font-size:11px;line-height:1.5;padding:7px 10px;border-radius:6px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.05);"></div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Mining Mode</label>
@@ -860,7 +870,8 @@
                 <h3>System</h3>
                 <div class="info-row"><span class="info-label">Miner Version</span><span class="info-value" id="version">--</span></div>
                 <div class="info-row"><span class="info-label">CPU Threads</span><span class="info-value" id="threads">--</span></div>
-                <div class="info-row"><span class="info-label">GPU Intensity</span><span class="info-value" id="gpuIntensityInfo">--</span></div>
+                <div class="info-row"><span class="info-label">GPU Work Size</span><span class="info-value" id="gpuIntensityInfo">--</span></div>
+                <div class="info-row"><span class="info-label">GPU Throttle</span><span class="info-value" id="gpuThrottleInfo">--</span></div>
                 <div class="info-row"><span class="info-label">Algorithm</span><span class="info-value">Scrypt-DT</span></div>
             </div>
             <div class="info-card">
@@ -1082,6 +1093,8 @@
             }
             const intEl = document.getElementById('gpuIntensityInfo');
             if (intEl && data.gpu_intensity !== undefined) intEl.textContent = data.gpu_intensity;
+            const thrEl = document.getElementById('gpuThrottleInfo');
+            if (thrEl && data.gpu_throttle !== undefined) thrEl.textContent = data.gpu_throttle + '%';
 
             updateDailyEarnings(data.accepted, data.uptime);
             updateStale(data.rejected ?? 0, data.submitted);
@@ -1667,6 +1680,49 @@
                 `<span style="color:var(--text-dim);">${rec}</span>`;
         }
 
+        function updateThrottleHint(val) {
+            val = parseInt(val);
+            const el = document.getElementById('throttleHint');
+            if (!el) return;
+            let color, badge, usage, desc, rec;
+            if (val <= 30) {
+                color  = 'hsl(142, 72%, 50%)';
+                badge  = '&#9679; Very Cool';
+                usage  = '~' + val + '% GPU utilisation';
+                desc   = 'Heavy duty-cycle throttle — GPU spends most of its time idle between kernels.';
+                rec    = 'Good for: very hot environments, poor airflow, or running mining alongside other GPU workloads.';
+            } else if (val <= 60) {
+                color  = 'hsl(195, 80%, 60%)';
+                badge  = '&#9679; Throttled';
+                usage  = '~' + val + '% GPU utilisation';
+                desc   = 'Moderate throttle — reduces GPU temperature meaningfully while keeping decent hashrate.';
+                rec    = 'Recommended starting point for temperature management. Adjust up or down to find your GPU\'s sweet spot.';
+            } else if (val <= 85) {
+                color  = 'hsl(45, 100%, 60%)';
+                badge  = '&#9679; Lightly Throttled';
+                usage  = '~' + val + '% GPU utilisation';
+                desc   = 'Small duty-cycle gap — takes the edge off peak temperatures without much hashrate loss.';
+                rec    = 'Good if GPUs are running hot but not critical. Lower further if temps are still too high.';
+            } else if (val < 100) {
+                color  = '#fb923c';
+                badge  = '&#9679; Near Full';
+                usage  = '~' + val + '% GPU utilisation';
+                desc   = 'Minimal throttle — barely any rest between kernels. Temperatures will be close to unthrottled.';
+                rec    = 'Only useful as a fine-tuning step. Drop to 70–80% for real temperature reduction.';
+            } else {
+                color  = '#f87171';
+                badge  = '&#9679; Unthrottled';
+                usage  = '100% GPU utilisation';
+                desc   = 'No sleep between kernel launches — GPU runs flat out at maximum power and heat.';
+                rec    = 'Default. Lower this slider if your GPUs are running too hot.';
+            }
+            el.innerHTML =
+                `<span style="color:${color};font-weight:600;">${badge}</span>` +
+                `<span style="color:var(--text-dim);margin-left:8px;">&#128293; ${usage}</span><br>` +
+                `<span style="color:var(--text-secondary);">${desc}</span><br>` +
+                `<span style="color:var(--text-dim);">${rec}</span>`;
+        }
+
         function setMode(mode) {
             ['cpu','gpu','both'].forEach(m => {
                 const btn = document.getElementById('mode' + m.charAt(0).toUpperCase() + m.slice(1));
@@ -1695,6 +1751,10 @@
                 document.getElementById('cfgGpuIntensity').value = intensity;
                 document.getElementById('intensityVal').textContent = intensity;
                 updateIntensityHint(intensity);
+                const throttle = cfg.GPU_THROTTLE || '100';
+                document.getElementById('cfgGpuThrottle').value = throttle;
+                document.getElementById('throttleVal').textContent = throttle + '%';
+                updateThrottleHint(throttle);
                 setMode(cfg.MINING_MODE || 'both');
                 setStartMode(startMode);
             } catch (e) {
@@ -1826,6 +1886,7 @@
                 THREADS:       document.getElementById('cfgThreads').value.trim(),
                 CPU_LIMIT:     document.getElementById('cfgCpuLimit').value.trim() || '100',
                 GPU_INTENSITY: document.getElementById('cfgGpuIntensity').value.trim(),
+                GPU_THROTTLE:  document.getElementById('cfgGpuThrottle').value.trim(),
                 MINING_MODE:   document.querySelector('.mode-btn.active')?.dataset.mode || 'both',
             };
 

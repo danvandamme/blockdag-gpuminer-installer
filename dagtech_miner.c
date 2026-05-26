@@ -85,7 +85,7 @@
 /* =========================================================================
  * DagTech GPU Miner Configuration
  * ========================================================================= */
-#define DAGTECH_VERSION       "GPU-2026.0526.3"
+#define DAGTECH_VERSION       "GPU-2026.0526.4"
 #define DAGTECH_BANNER        "DagTech GPU Miner v" DAGTECH_VERSION " - dagtech.network"
 #define DAGTECH_AUTHOR        "Dawie Nel / DagTech Ltd"
 #define DAGTECH_DEFAULT_POOL  "excalibur.dagtech.network"
@@ -114,7 +114,8 @@ static char dashboard_dir[512] = "";
 
 /* GPU configuration */
 static int gpu_enabled   = -1;  /* -1=auto, 0=disabled, 1=enabled */
-static int gpu_intensity = 80;  /* 0-100 */
+static int gpu_intensity = 80;  /* 0-100: work batch size / VRAM allocation */
+static int gpu_throttle  = 100; /* 5-100: duty-cycle limit; 100 = no sleep between kernels */
 static int gpu_platform  = 0;
 static int gpu_device    = 0;
 
@@ -677,6 +678,7 @@ static void *dagtech_gpu_thread(void *arg) {
             clSetKernelArg(g_kernel, 4, sizeof(cl_uint), &nonce_base);
 
             /* Launch */
+            long long t_gpu_start = dagtech_tick_ms();
             cl_event ev;
             cl_int err = clEnqueueNDRangeKernel(g_queue, g_kernel, 1, NULL,
                                                  &gpu_global_size, NULL, 0, NULL, &ev);
@@ -686,6 +688,16 @@ static void *dagtech_gpu_thread(void *arg) {
             }
             clWaitForEvents(1, &ev);
             clReleaseEvent(ev);
+
+            /* GPU throttle: sleep to limit duty cycle and reduce heat */
+            if (gpu_throttle < 100) {
+                long long elapsed_gpu = dagtech_tick_ms() - t_gpu_start;
+                if (elapsed_gpu > 0) {
+                    long long sleep_ms = elapsed_gpu * (100 - gpu_throttle) / gpu_throttle;
+                    if (sleep_ms > 2000) sleep_ms = 2000;
+                    usleep((unsigned int)(sleep_ms * 1000));
+                }
+            }
 
             /* Read output */
             cl_uint output_result[2] = { 0xFFFFFFFFu, 0 };
@@ -1439,6 +1451,7 @@ static void dagtech_load_config(const char *path) {
         else if (strcmp(key, "DASHBOARD_DIR")== 0) strncpy(dashboard_dir,val, sizeof(dashboard_dir)- 1);
         else if (strcmp(key, "GPU_ENABLED")  == 0) gpu_enabled   = atoi(val);
         else if (strcmp(key, "GPU_INTENSITY")== 0) { gpu_intensity = atoi(val); if (gpu_intensity < 0) gpu_intensity = 0; if (gpu_intensity > 100) gpu_intensity = 100; }
+        else if (strcmp(key, "GPU_THROTTLE") == 0) { gpu_throttle = atoi(val); if (gpu_throttle < 5) gpu_throttle = 5; if (gpu_throttle > 100) gpu_throttle = 100; }
         else if (strcmp(key, "GPU_PLATFORM") == 0) gpu_platform  = atoi(val);
         else if (strcmp(key, "GPU_DEVICE")   == 0) gpu_device    = atoi(val);
     }
@@ -1470,6 +1483,7 @@ static int dagtech_save_config(const char *path) {
     fprintf(f, "METRICS_PORT=%d\n",  metrics_port);
     fprintf(f, "GPU_ENABLED=%d\n",   gpu_enabled);
     fprintf(f, "GPU_INTENSITY=%d\n", gpu_intensity);
+    fprintf(f, "GPU_THROTTLE=%d\n",  gpu_throttle);
     fprintf(f, "GPU_PLATFORM=%d\n",  gpu_platform);
     fprintf(f, "GPU_DEVICE=%d\n",    gpu_device);
     if (dashboard_dir[0])
@@ -1559,6 +1573,11 @@ int main(int argc, char **argv) {
             if (gpu_intensity < 0)   gpu_intensity = 0;
             if (gpu_intensity > 100) gpu_intensity = 100;
         }
+        else if (strcmp(argv[i], "--gpu-throttle") == 0 && i + 1 < argc) {
+            gpu_throttle = atoi(argv[++i]);
+            if (gpu_throttle < 5)    gpu_throttle = 5;
+            if (gpu_throttle > 100)  gpu_throttle = 100;
+        }
         else if (strcmp(argv[i], "--gpu-platform") == 0 && i + 1 < argc)
             gpu_platform = atoi(argv[++i]);
         else if (strcmp(argv[i], "--gpu-device") == 0 && i + 1 < argc)
@@ -1641,8 +1660,8 @@ int main(int argc, char **argv) {
     if (use_gpu) {
         if (gpu_init(argv[0]) == 0) {
             gpu_enabled = 1;
-            printf("[DagTech GPU] Intensity: %d | Platform: %d | Device: %d\n",
-                   gpu_intensity, gpu_platform, gpu_device);
+            printf("[DagTech GPU] Intensity: %d | Throttle: %d%% | Platform: %d | Device: %d\n",
+                   gpu_intensity, gpu_throttle, gpu_platform, gpu_device);
         } else {
             fprintf(stderr, "[DagTech GPU] GPU init failed - running CPU only.\n");
             gpu_enabled = 0;
