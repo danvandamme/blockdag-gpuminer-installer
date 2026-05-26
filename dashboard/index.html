@@ -566,6 +566,19 @@
             word-break: break-all;
         }
 
+        /* Pool connection dot */
+        .pool-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            transition: background 0.4s, box-shadow 0.4s;
+            background: var(--text-dim);
+        }
+        .pool-dot.connected    { background: hsl(142,72%,50%); box-shadow: 0 0 6px hsla(142,72%,50%,0.55); }
+        .pool-dot.connecting,
+        .pool-dot.reconnecting { background: hsl(45,100%,55%); }
+        .pool-dot.disconnected { background: #f87171; box-shadow: 0 0 6px hsla(0,80%,65%,0.45); }
+
         /* Font imports */
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
     </style>
@@ -746,6 +759,15 @@
 
         <!-- Main Stats -->
         <div class="stats-grid">
+            <!-- Node connection status -->
+            <div class="stat-card">
+                <div class="stat-label">Node Connection</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                    <div class="pool-dot" id="poolConnDot"></div>
+                    <div class="stat-value" id="poolConnStatus" style="font-size:18px;color:var(--text-dim);">--</div>
+                </div>
+                <div class="stat-sub" id="poolConnSub"></div>
+            </div>
             <!-- Row 1: Mining stats -->
             <div class="stat-card">
                 <div class="stat-label">Total Hash Rate</div>
@@ -1095,6 +1117,22 @@
             els.rejected.textContent   = data.rejected + ' rejected';
             els.poolAddr.textContent   = data.pool;
             els.walletAddr.textContent = data.wallet;
+
+            // Pool / node connection indicator
+            const connDot = document.getElementById('poolConnDot');
+            const connTxt = document.getElementById('poolConnStatus');
+            const connSub = document.getElementById('poolConnSub');
+            if (connDot && connTxt) {
+                const s = data.pool_status || 'unknown';
+                connDot.className = 'pool-dot ' + s;
+                const labels = { connected: 'Connected', connecting: 'Connecting…',
+                                 reconnecting: 'Reconnecting…', disconnected: 'Disconnected', unknown: '--' };
+                const colors = { connected: 'hsl(142,72%,50%)', connecting: 'hsl(45,100%,55%)',
+                                 reconnecting: 'hsl(25,100%,55%)', disconnected: '#f87171', unknown: 'var(--text-dim)' };
+                connTxt.textContent  = labels[s] || s;
+                connTxt.style.color  = colors[s]  || 'var(--text-dim)';
+                if (connSub) connSub.textContent = data.pool || '';
+            }
             els.difficulty.textContent = data.difficulty.toFixed(8);
             els.jobId.textContent      = data.job_id || '--';
             els.version.textContent    = data.version || '--';

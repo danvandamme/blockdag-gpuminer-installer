@@ -620,6 +620,7 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                     gpu_intensity = if ($cfg["GPU_INTENSITY"])      { [int]$cfg["GPU_INTENSITY"] }                       else { 80 }
                     gpu_throttle  = if ($cfg["GPU_THROTTLE"])       { [int]$cfg["GPU_THROTTLE"] }                        else { 100 }
                     mining_mode   = $miningMode
+                    pool_status      = "unknown"
                     job_id           = ""
                     hashrate         = 0.0
                     accepted         = 0
@@ -654,8 +655,9 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                         $foundStats = $false
                         $foundDiff  = $false
                         $foundJob   = $false
+                        $foundConn  = $false
                         for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-                            if ($foundStats -and $foundDiff -and $foundJob) { break }
+                            if ($foundStats -and $foundDiff -and $foundJob -and $foundConn) { break }
                             $line = $lines[$i]
                             # Match GPU stats line: X.XX H/s | CPU: Y H/s | GPU: Z H/s | Shares: ...
                             if (-not $foundStats -and $line -match '\[DagTech\]\s+([\d.]+)\s+H/s\s+\|\s+CPU:\s+([\d.]+)\s+H/s\s+\|\s+GPU:\s+([\d.]+)\s+H/s\s+\|\s+Shares:\s+(\d+)/(\d+)/(\d+)/(\d+).*Uptime:\s+(\d+)h(\d+)m') {
@@ -690,6 +692,14 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                             if (-not $foundJob -and $line -match '\[DagTech\]\s+New job:\s+(\S+)') {
                                 $out["job_id"] = $Matches[1]
                                 $foundJob = $true
+                            }
+                            if (-not $foundConn) {
+                                if     ($line -match '\[DagTech\] Connected!')           { $out["pool_status"] = "connected";    $foundConn = $true }
+                                elseif ($line -match '\[DagTech\] New job:')             { $out["pool_status"] = "connected";    $foundConn = $true }
+                                elseif ($line -match '\[DagTech\] Pool connection lost') { $out["pool_status"] = "disconnected"; $foundConn = $true }
+                                elseif ($line -match '\[DagTech\] Reconnecting')         { $out["pool_status"] = "reconnecting"; $foundConn = $true }
+                                elseif ($line -match '\[DagTech\] Connecting to pool')   { $out["pool_status"] = "connecting";   $foundConn = $true }
+                                elseif ($line -match '\[DagTech\] Waiting for work')     { $out["pool_status"] = "connecting";   $foundConn = $true }
                             }
                         }
                     } catch {}
