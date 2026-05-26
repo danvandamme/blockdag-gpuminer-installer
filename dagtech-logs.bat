@@ -25,7 +25,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "Get-Content -Wait -Tail 60 $log | ForEach-Object {" ^
     "    if ($_.Contains('[DagTech GPU]'))              { Write-Host $_ -ForegroundColor Magenta }" ^
     "    elseif ($_.Contains('[DagTech CPU]'))         { Write-Host $_ -ForegroundColor Green }" ^
-    "    elseif ($_ -match 'SHARE FOUND|ACCEPTED')    { Write-Host $_ -ForegroundColor Green }" ^
+    "    elseif ($_ -match 'SHARE FOUND|ACCEPTED')    { Write-Host $_ -ForegroundColor Cyan }" ^
     "    elseif ($_ -match 'ERROR|failed|FAILED')      { Write-Host $_ -ForegroundColor Red }" ^
     "    elseif ($_ -match 'WARN|warn')                { Write-Host $_ -ForegroundColor Yellow }" ^
     "    elseif ($_ -match 'Control server|Watchdog|Starting') { Write-Host $_ -ForegroundColor Cyan }" ^
