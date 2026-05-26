@@ -519,10 +519,29 @@
 
         /* GPU sliders (intensity / throttle) */
         .intensity-row { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
-        .intensity-slider {
+        .slider-wrap {
+            position: relative;
             flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .intensity-slider {
+            width: 100%;
             accent-color: var(--gpu-primary);
             cursor: pointer;
+            margin: 0;
+        }
+        .rec-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
+            width: 0%;
+            background: linear-gradient(to right, hsl(142,65%,32%), hsl(142,65%,45%));
+            border-radius: 0 2px 2px 0;
+            box-shadow: 0 0 6px hsla(142,65%,40%,0.45);
+            pointer-events: none;
+            transition: width 0.25s ease;
         }
         .intensity-label {
             font-size: 13px;
@@ -626,9 +645,12 @@
                 <div class="form-group">
                     <label class="form-label">VRAM / Work Size <span style="font-size:10px;opacity:0.55;font-weight:400;">(GPU_INTENSITY)</span></label>
                     <div class="intensity-row">
-                        <input class="intensity-slider" type="range" id="cfgGpuIntensity" min="0" max="100" value="80"
-                               list="intensityTicks"
-                               oninput="document.getElementById('intensityVal').textContent=this.value; document.getElementById('intensityRecBadge').style.display=(gpuRecIntensity>=0&&parseInt(this.value)===gpuRecIntensity?'inline':'none'); updateIntensityHint(parseInt(this.value))">
+                        <div class="slider-wrap">
+                            <input class="intensity-slider" type="range" id="cfgGpuIntensity" min="0" max="100" value="80"
+                                   list="intensityTicks"
+                                   oninput="document.getElementById('intensityVal').textContent=this.value; document.getElementById('intensityRecBadge').style.display=(gpuRecIntensity>=0&&parseInt(this.value)===gpuRecIntensity?'inline':'none'); updateIntensityHint(parseInt(this.value))">
+                            <div class="rec-bar" id="intensityRecBar"></div>
+                        </div>
                         <datalist id="intensityTicks"><option value="80" id="intensityTickRec"></datalist>
                         <span class="intensity-label" id="intensityVal">80</span>
                         <span id="intensityRecBadge" style="font-size:10px;color:hsl(142,72%,55%);font-weight:700;white-space:nowrap;padding:2px 5px;border-radius:4px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);">&#10003; Rec</span>
@@ -1758,6 +1780,16 @@
                 `<span style="color:var(--text-dim);">${rec}</span>`;
         }
 
+        function updateRecBar() {
+            const bar = document.getElementById('intensityRecBar');
+            if (!bar) return;
+            if (gpuRecIntensity < 0) { bar.style.width = '0%'; return; }
+            // Align bar tip with thumb centre: width = rec% + (8 - rec*0.16)px
+            // Derived from: 8px + (rec/100)*(containerWidth - 16px)
+            const adj = (8 - gpuRecIntensity * 0.16).toFixed(2);
+            bar.style.width = 'calc(' + gpuRecIntensity + '% + ' + adj + 'px)';
+        }
+
         function setMode(mode) {
             ['cpu','gpu','both'].forEach(m => {
                 const btn = document.getElementById('mode' + m.charAt(0).toUpperCase() + m.slice(1));
@@ -1799,6 +1831,7 @@
                 // Move the datalist tick mark to the per-GPU recommended position
                 const tickEl = document.getElementById('intensityTickRec');
                 if (tickEl) tickEl.value = gpuRecIntensity >= 0 ? gpuRecIntensity : 80;
+                updateRecBar();
                 const intensity = cfg.GPU_INTENSITY || '80';
                 document.getElementById('cfgGpuIntensity').value = intensity;
                 document.getElementById('intensityVal').textContent = intensity;
