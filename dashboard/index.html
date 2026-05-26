@@ -610,6 +610,7 @@
                         <input class="form-input" id="cfgPassword" type="text" placeholder="leave blank if none" spellcheck="false" autocomplete="off">
                     </div>
                 </div>
+                <div id="cpuControlsSection" style="transition:opacity 0.2s;">
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">CPU Threads</label>
@@ -620,6 +621,8 @@
                         <input class="form-input" id="cfgCpuLimit" type="number" placeholder="100" min="1" max="100" title="Throttle CPU usage per thread (1-100%).">
                     </div>
                 </div>
+                </div><!-- /#cpuControlsSection -->
+                <div id="gpuControlsSection" style="transition:opacity 0.2s;">
                 <div class="form-group">
                     <label class="form-label">VRAM / Work Size <span style="font-size:10px;opacity:0.55;font-weight:400;">(GPU_INTENSITY)</span></label>
                     <div class="intensity-row">
@@ -642,6 +645,7 @@
                     </div>
                     <div id="throttleHint" style="margin-top:7px;font-size:11px;line-height:1.5;padding:7px 10px;border-radius:6px;background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.05);"></div>
                 </div>
+                </div><!-- /#gpuControlsSection -->
                 <div class="form-group">
                     <label class="form-label">Mining Mode</label>
                     <div class="mode-group">
@@ -1759,6 +1763,18 @@
                 const btn = document.getElementById('mode' + m.charAt(0).toUpperCase() + m.slice(1));
                 if (btn) btn.classList.toggle('active', m === mode);
             });
+            const gpuOff = (mode === 'cpu');
+            const cpuOff = (mode === 'gpu');
+            const gpuSec = document.getElementById('gpuControlsSection');
+            const cpuSec = document.getElementById('cpuControlsSection');
+            if (gpuSec) {
+                gpuSec.style.opacity       = gpuOff ? '0.35' : '';
+                gpuSec.style.pointerEvents = gpuOff ? 'none'  : '';
+            }
+            if (cpuSec) {
+                cpuSec.style.opacity       = cpuOff ? '0.35' : '';
+                cpuSec.style.pointerEvents = cpuOff ? 'none'  : '';
+            }
         }
 
         async function openConfig() {
@@ -1916,6 +1932,7 @@
             const status = document.getElementById('configStatus');
             btn.disabled = true; btn.textContent = 'Saving...'; status.textContent = '';
 
+            const mode = document.querySelector('.mode-btn.active')?.dataset.mode || 'both';
             const cfg = {
                 WALLET:        document.getElementById('cfgWallet').value.trim(),
                 POOL_HOST:     document.getElementById('cfgPoolHost').value.trim(),
@@ -1924,9 +1941,10 @@
                 POOL_PASSWORD: document.getElementById('cfgPassword').value.trim(),
                 THREADS:       document.getElementById('cfgThreads').value.trim(),
                 CPU_LIMIT:     document.getElementById('cfgCpuLimit').value.trim() || '100',
+                GPU_ENABLED:   mode === 'cpu' ? '0' : '1',
                 GPU_INTENSITY: document.getElementById('cfgGpuIntensity').value.trim(),
                 GPU_THROTTLE:  document.getElementById('cfgGpuThrottle').value.trim(),
-                MINING_MODE:   document.querySelector('.mode-btn.active')?.dataset.mode || 'both',
+                MINING_MODE:   mode,
             };
 
             try {
