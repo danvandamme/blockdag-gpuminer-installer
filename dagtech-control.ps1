@@ -262,6 +262,22 @@ while ($listener.IsListening) {
                 Send-Response $ctx $html 200 "text/html; charset=utf-8"
                 break
             }
+            "/logo.png" {
+                $logoPath = Join-Path $BaseDir "dashboard\logo.png"
+                if (Test-Path $logoPath) {
+                    try {
+                        $fileBytes = [System.IO.File]::ReadAllBytes($logoPath)
+                        $ctx.Response.StatusCode = 200
+                        $ctx.Response.ContentType = "image/png"
+                        $ctx.Response.Headers["Cache-Control"] = "public, max-age=86400"
+                        $ctx.Response.ContentLength64 = $fileBytes.Length
+                        $ctx.Response.OutputStream.Write($fileBytes, 0, $fileBytes.Length)
+                        $ctx.Response.OutputStream.Flush()
+                        $ctx.Response.Close()
+                    } catch {}
+                } else { Send-Response $ctx "" 404 }
+                break
+            }
             "/status" {
                 $running = ($null -ne (Get-MinerProcess)).ToString().ToLower()
                 $stopped = (Test-Path $script:STOPFILE).ToString().ToLower()
