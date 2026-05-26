@@ -1695,31 +1695,35 @@
             val = parseInt(val);
             const el = document.getElementById('intensityHint');
             if (!el) return;
-            let color, badge, vram, desc, rec;
+
+            // Actual V-buffer = 2^(1 + intensity/100*6) GB
+            const vbufGB = Math.pow(2, 1 + val / 100 * 6);
+            let vramStr;
+            if      (vbufGB >= 100) vramStr = vbufGB.toFixed(0) + ' GB V-buffer';
+            else if (vbufGB >= 10)  vramStr = vbufGB.toFixed(1) + ' GB V-buffer';
+            else                    vramStr = vbufGB.toFixed(2) + ' GB V-buffer';
+
+            let color, badge, desc, rec;
             if (val <= 30) {
                 color  = 'hsl(142, 72%, 50%)';
                 badge  = '&#9679; Conservative';
-                vram   = '~1 GB VRAM';
                 desc   = 'Low GPU load — reduced hashrate but runs cool and quiet.';
-                rec    = 'Good for: 2 GB GPUs, shared workstation PCs, or leaving headroom for other GPU tasks.';
+                rec    = 'Good for: GPUs with 4–8 GB VRAM, shared workstations, or leaving headroom for other GPU tasks.';
             } else if (val <= 60) {
                 color  = 'hsl(210, 80%, 65%)';
                 badge  = '&#9679; Balanced';
-                vram   = '~2 GB VRAM';
                 desc   = 'Moderate GPU load — solid hashrate without pushing thermals.';
-                rec    = 'Good for: 4 GB GPUs, 24/7 rigs, or any system where stability matters more than peak speed.';
+                rec    = 'Good for: 8–24 GB GPUs and 24/7 rigs where stability matters as much as speed.';
             } else if (val <= 85) {
                 color  = 'hsl(45, 100%, 60%)';
                 badge  = '&#9679; Performance';
-                vram   = '~3–4 GB VRAM';
-                desc   = 'High GPU load — near-maximum hashrate. Monitor temperatures.';
-                rec    = 'Requires a 4 GB+ GPU. Reduce if you see crashes or GPU errors in logs.';
+                desc   = 'High GPU load — maximum hashrate for high-VRAM GPUs. Monitor temperatures.';
+                rec    = 'Requires 24 GB+ VRAM. Reduce if you see crashes or GPU errors in logs.';
             } else {
                 color  = '#f87171';
                 badge  = '&#9679; Maximum';
-                vram   = '6 GB+ VRAM';
                 desc   = 'Full GPU load — highest possible hashrate, maximum heat and power draw.';
-                rec    = 'Only for 6 GB+ GPUs with good cooling. May cause instability on mid-range cards.';
+                rec    = 'Requires 64 GB+ VRAM (datacenter GPUs). Will crash or OOM on typical consumer cards.';
             }
             // Per-GPU recommendation row
             let recRow = '';
@@ -1731,7 +1735,7 @@
             }
             el.innerHTML =
                 `<span style="color:${color};font-weight:600;">${badge}</span>` +
-                `<span style="color:var(--text-dim);margin-left:8px;">&#128190; ${vram}</span><br>` +
+                `<span style="color:var(--text-dim);margin-left:8px;">&#128190; ${vramStr}</span><br>` +
                 recRow +
                 `<span style="color:var(--text-secondary);">${desc}</span><br>` +
                 `<span style="color:var(--text-dim);">${rec}</span>`;
