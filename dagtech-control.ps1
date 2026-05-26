@@ -383,12 +383,18 @@ Write-Host ''
 `$log = '$($logFile -replace "'","''")'
 while (-not (Test-Path `$log)) { Write-Host 'Waiting for log file...' -ForegroundColor DarkGray; Start-Sleep 2 }
 Get-Content -Wait -Tail 50 `$log | ForEach-Object {
-    if (`$_ -match 'SHARE FOUND') {
+    if (`$_.Contains('[DagTech GPU]')) {
+        Write-Host `$_ -ForegroundColor Magenta
+    } elseif (`$_.Contains('[DagTech CPU]')) {
         Write-Host `$_ -ForegroundColor Green
+    } elseif (`$_ -match 'SHARE FOUND|ACCEPTED') {
+        Write-Host `$_ -ForegroundColor Cyan
     } elseif (`$_ -match 'ERROR|error|failed|FAILED') {
         Write-Host `$_ -ForegroundColor Red
     } elseif (`$_ -match 'WARN|warn') {
         Write-Host `$_ -ForegroundColor Yellow
+    } elseif (`$_ -match 'Control server|Watchdog|Starting') {
+        Write-Host `$_ -ForegroundColor Cyan
     } else {
         Write-Host `$_ -ForegroundColor Gray
     }
