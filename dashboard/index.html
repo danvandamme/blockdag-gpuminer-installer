@@ -594,6 +594,18 @@
                         <button class="mode-btn active" id="modeBoth" data-mode="both" onclick="setMode('both')">&#9889; CPU + GPU</button>
                     </div>
                 </div>
+                <div class="form-row" style="border-top:1px solid var(--border-color);padding-top:14px;margin-top:6px">
+                    <div class="form-group">
+                        <label class="form-label">Metrics Port <span style="font-size:10px;opacity:0.55;font-weight:400;">(read-only)</span></label>
+                        <input class="form-input" id="cfgMetricsPort" type="text" readonly tabindex="-1"
+                               style="opacity:0.6;cursor:default;" title="Set by installer — HTTP metrics API used by the node dashboard">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Dashboard Port <span style="font-size:10px;opacity:0.55;font-weight:400;">(read-only)</span></label>
+                        <input class="form-input" id="cfgDashPort" type="text" readonly tabindex="-1"
+                               style="opacity:0.6;cursor:default;" title="Set by installer — this control server dashboard">
+                    </div>
+                </div>
                 <div class="form-group" style="border-top:1px solid var(--border-color);padding-top:14px;margin-top:6px">
                     <label class="form-label">Start Mode</label>
                     <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
@@ -1628,6 +1640,8 @@
                 document.getElementById('cfgPassword').value    = cfg.POOL_PASSWORD || '';
                 document.getElementById('cfgThreads').value     = cfg.THREADS       || '';
                 document.getElementById('cfgCpuLimit').value    = cfg.CPU_LIMIT     || '100';
+                document.getElementById('cfgMetricsPort').value = cfg.METRICS_PORT  || '8882';
+                document.getElementById('cfgDashPort').value    = '8883';
                 const intensity = cfg.GPU_INTENSITY || '80';
                 document.getElementById('cfgGpuIntensity').value = intensity;
                 document.getElementById('intensityVal').textContent = intensity;

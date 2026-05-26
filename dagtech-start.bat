@@ -17,6 +17,8 @@ if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 netstat -an 2>nul | find "8883" | find "LISTENING" >nul
 if not errorlevel 1 (
     echo [DagTech GPU] Already running. Dashboard: http://127.0.0.1:8883/
+    powershell -NoProfile -Command ^
+        "Add-Type -AssemblyName System.Windows.Forms; $owner = New-Object System.Windows.Forms.Form; $owner.TopMost=$true; $owner.Show(); $owner.Hide(); [System.Windows.Forms.MessageBox]::Show($owner, 'DagTech GPU Miner is already running.' + [char]10 + [char]10 + 'Opening the dashboard now...', 'Already Running', 'OK', 'Information') | Out-Null; $owner.Dispose()"
     start "" http://127.0.0.1:8883/
     exit /b 0
 )

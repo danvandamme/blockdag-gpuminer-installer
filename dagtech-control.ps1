@@ -14,6 +14,22 @@ $PIDFILE           = Join-Path $BaseDir "logs\control.pid"
 $script:TASK_NAME  = "DagTech GPU Miner"
 
 if (-not (Test-Path $script:LOGDIR)) { New-Item -ItemType Directory -Path $script:LOGDIR | Out-Null }
+
+# ── Single-instance guard ────────────────────────────────────────────────────
+# If a previous instance wrote a PID file and that process is still alive,
+# exit immediately so two control servers never run side-by-side.
+if (Test-Path $PIDFILE) {
+    try {
+        $existingPid = [int](Get-Content $PIDFILE -Raw)
+        if ($existingPid -and $existingPid -ne $PID) {
+            $existingProc = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
+            if ($existingProc) {
+                Write-Host "[DagTech GPU] Control server already running (PID $existingPid). Exiting."
+                exit 0
+            }
+        }
+    } catch {}
+}
 [System.IO.File]::WriteAllText($PIDFILE, "$PID")
 
 $script:StartMode = "service"
