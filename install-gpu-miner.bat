@@ -419,13 +419,16 @@ if defined DEF_START_MODE set "START_MODE_CHOICE=!DEF_START_MODE!"
 echo   How should the miner start?
 echo     [1] System service  - starts at boot, runs as SYSTEM (no login needed)
 echo     [2] At login        - starts when you log in, runs as you (terminal log window)
+echo     [3] Manual only     - does NOT auto-start; use the desktop shortcut when you want to mine
 echo.
 if /i "!START_MODE_CHOICE!"=="login" (
     set /p "SM_INPUT=  Choice (default: 2): "
+) else if /i "!START_MODE_CHOICE!"=="manual" (
+    set /p "SM_INPUT=  Choice (default: 3): "
 ) else (
     set /p "SM_INPUT=  Choice (default: 1): "
 )
-if "!SM_INPUT!"=="2" ( set "START_MODE_CHOICE=login" ) else if "!SM_INPUT!"=="1" ( set "START_MODE_CHOICE=service" )
+if "!SM_INPUT!"=="1" ( set "START_MODE_CHOICE=service" ) else if "!SM_INPUT!"=="2" ( set "START_MODE_CHOICE=login" ) else if "!SM_INPUT!"=="3" ( set "START_MODE_CHOICE=manual" )
 echo   Start mode: !START_MODE_CHOICE!
 echo.
 
@@ -624,7 +627,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "if (Test-Path $pidFile) { try { $p=Get-Process -Id ([int](Get-Content $pidFile -Raw).Trim()) -ErrorAction Stop; $p | Stop-Process -Force; Start-Sleep -Milliseconds 800 } catch {} }" ^
     "Get-Process -Name powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*dagtech-control*' } | Stop-Process -Force -ErrorAction SilentlyContinue" 2>nul
 
-if /i "!START_MODE_CHOICE!"=="login" goto :task_login
+if /i "!START_MODE_CHOICE!"=="manual" goto :task_manual
+if /i "!START_MODE_CHOICE!"=="login"  goto :task_login
 
 :task_service
 echo   [GPU Miner] Registering auto-start scheduled task (system service, starts at boot)...
@@ -658,6 +662,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$st=Get-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue;" ^
     "if ($st) { Start-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue; Write-Host ('[GPU Miner] Task registered and started (login). State: ' + $st.State) } else { Write-Host '[GPU Miner] ERROR: Task registration failed - try running installer as Administrator.' }"
 
+goto :task_done
+
+:task_manual
+echo   [GPU Miner] Manual-only mode — no scheduled task will be created.
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Unregister-ScheduledTask -TaskName 'DagTech GPU Miner' -Confirm:$false -ErrorAction SilentlyContinue" >nul 2>&1
+if not exist "%INSTALL_DIR%\logs" mkdir "%INSTALL_DIR%\logs" 2>nul
+echo. > "%INSTALL_DIR%\logs\.stop"
+echo   [GPU Miner] Miner installed. Use the "DagTech GPU Miner" desktop shortcut to start mining.
+
 :task_done
 
 REM Disable sleep/hibernate so the miner never stops due to power management
@@ -686,6 +700,11 @@ echo.
 echo   Config:  %CONFIG_FILE%
 echo   Logs:    %LOG_DIR%
 echo.
+if /i "!START_MODE_CHOICE!"=="manual" (
+    echo   Start mode: Manual — the miner will NOT start automatically.
+    echo   Double-click "DagTech GPU Miner" on your desktop whenever you want to mine.
+    echo.
+)
 echo   To update settings: edit %CONFIG_FILE% directly.
 echo.
 echo   DagTech GPU Mining Suite v%VERSION%
