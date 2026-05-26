@@ -236,55 +236,6 @@
         .chart-container { width: 100%; height: 200px; position: relative; }
         canvas { width: 100% !important; height: 100% !important; }
 
-        /* BDAG Earnings */
-        .earnings-section { margin-bottom: 24px; }
-        .earnings-section-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
-
-        .earnings-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-        }
-
-        @media (max-width: 768px) { .earnings-grid { grid-template-columns: 1fr; } }
-
-        .earnings-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 20px;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
-            position: relative;
-        }
-        .earnings-card:hover {
-            background: var(--bg-card-hover);
-            border-color: var(--border-glow);
-            box-shadow: 0 0 20px hsla(210, 100%, 56%, 0.05);
-        }
-        .earnings-card-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
-        .earnings-card-source { font-size: 11px; color: var(--blue-primary); margin-bottom: 14px; opacity: 0.8; }
-        .earnings-value { font-family: 'Space Grotesk', 'SF Mono', monospace; font-size: 26px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
-        .earnings-value .earnings-unit { font-size: 14px; font-weight: 400; color: var(--text-secondary); }
-        .earnings-status { font-size: 11px; color: var(--text-dim); margin-top: 8px; min-height: 16px; }
-        .earnings-status.ok      { color: hsl(142, 72%, 50%); }
-        .earnings-status.err     { color: #f87171; }
-        .earnings-status.pending { color: var(--text-dim); }
-        .earnings-rate-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
-        .earnings-rate-label { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
-        .earnings-rate-input {
-            background: rgba(0,0,0,0.3);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-primary);
-            font-family: 'SF Mono', monospace;
-            font-size: 12px;
-            padding: 3px 7px;
-            width: 90px;
-            outline: none;
-        }
-        .earnings-rate-input:focus { border-color: var(--blue-primary); }
-
         /* Info Grid */
         .bottom-row {
             display: grid;
@@ -895,60 +846,6 @@
             </div>
         </div>
 
-        <!-- BDAG Earnings -->
-        <div class="earnings-section">
-            <div class="earnings-section-title">BDAG Earnings</div>
-            <div class="earnings-grid">
-                <!-- Blocks Found -->
-                <div class="earnings-card" id="blocksCard">
-                    <div class="earnings-card-title">Blocks Found</div>
-                    <div class="earnings-card-source">Source: pool stats</div>
-                    <div class="earnings-value">
-                        <span id="blocksCount" style="color:var(--text-primary)">0</span>
-                        <span class="earnings-unit">blocks</span>
-                    </div>
-                    <div class="earnings-status pending" id="blocksSub">No blocks found yet — keep mining!</div>
-                    <div style="font-size:12px;color:var(--text-secondary);margin-top:10px;min-height:30px;line-height:1.6;" id="blocksRecent"></div>
-                </div>
-                <!-- Est. Daily Earnings -->
-                <div class="earnings-card">
-                    <div class="earnings-card-title">Est. Daily Earnings</div>
-                    <div class="earnings-card-source">Source: shares ÷ uptime × rate</div>
-                    <div class="earnings-value" id="dailyEarnings">-- <span class="earnings-unit">BDAG</span></div>
-                    <div class="earnings-status pending" id="dailyEarningsSub">Based on shares/uptime</div>
-                </div>
-                <!-- Local Estimate -->
-                <div class="earnings-card">
-                    <div class="earnings-card-title">Local Estimate</div>
-                    <div class="earnings-card-source">Source: accepted shares × rate</div>
-                    <div class="earnings-value" id="bdagEstimate">-- <span class="earnings-unit">BDAG</span></div>
-                    <div class="earnings-status pending" id="bdagEstimateStatus">Waiting for shares...</div>
-                    <div class="earnings-rate-row">
-                        <span class="earnings-rate-label">BDAG / share:</span>
-                        <input class="earnings-rate-input" type="number" id="rewardPerShare" value="0.001" min="0" step="0.0001">
-                    </div>
-                    <div id="rateSourceLine" style="font-size:11px;color:var(--text-dim);margin-top:4px;min-height:14px;"></div>
-                </div>
-            </div>
-            <!-- Full-width disclaimer bar -->
-            <div style="
-                margin-top: 10px;
-                padding: 9px 16px;
-                border-radius: 8px;
-                background: hsla(45, 100%, 55%, 0.05);
-                border: 1px solid hsla(45, 100%, 55%, 0.18);
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 11px;
-                color: var(--text-dim);
-                line-height: 1.5;
-            ">
-                <span style="color:hsl(45,100%,60%);font-size:13px;flex-shrink:0;">&#9888;</span>
-                <span><strong style="color:hsl(45,100%,65%);">Local Estimate only</strong> &mdash; figures shown here are projected from accepted shares and hash rate. Actual earnings are determined by blocks found and confirmed by the pool.</span>
-            </div>
-        </div>
-
         <!-- System + Activity Log -->
         <div class="bottom-row">
             <div class="info-card">
@@ -997,11 +894,6 @@
         let lastShareTimestamp = null;
         let lastCpuSharesFound = null;   // null = not yet initialised (first poll)
         let lastGpuSharesFound = null;
-        let lastPoolFetchWallet = null;
-        let lastPoolFetchTime = 0;
-        let localPoolStats = null;
-        let localPoolPollTimer = null;
-        const POOL_FETCH_INTERVAL = 10 * 60 * 1000;
 
         const els = {
             hashrate:      document.getElementById('hashrate'),
@@ -1190,11 +1082,8 @@
             const thrEl = document.getElementById('gpuThrottleInfo');
             if (thrEl && data.gpu_throttle !== undefined) thrEl.textContent = data.gpu_throttle + '%';
 
-            updateDailyEarnings(data.accepted, data.uptime);
             updateStale(data.rejected ?? 0, data.submitted);
             updateStaleCount(data.stale ?? 0, data.submitted);
-            if (isLocalPool(data.pool)) startLocalPoolPoll(); else stopLocalPoolPoll();
-            applyPoolRate();
         }
 
         // ── Miner controls ──────────────────────────────────────────
@@ -1306,100 +1195,6 @@
                 ctx.fillStyle = '#64748b'; ctx.font = '11px Inter, sans-serif'; ctx.textAlign = 'center';
                 ctx.fillText('H/s', padding.left + chartW / 2, h - 5);
             }
-        }
-
-        // ── Local pool stats ────────────────────────────────────────
-
-        function isLocalPool(poolStr) {
-            return !!(poolStr && (poolStr.includes('127.0.0.1') || poolStr.startsWith('localhost')));
-        }
-
-        async function pollLocalPoolStats() {
-            try {
-                const resp = await fetch('http://127.0.0.1:8088/poolstats', { signal: AbortSignal.timeout(5000) });
-                if (resp.ok) localPoolStats = await resp.json();
-            } catch (e) {}
-            applyPoolRate();
-        }
-
-        function applyPoolRate() {
-            const line = document.getElementById('rateSourceLine');
-            if (!localPoolStats) return;
-            if (localPoolStats.total_reward_bdag > 0 && lastAccepted > 0) {
-                const rate = (localPoolStats.total_reward_bdag * 0.98) / lastAccepted;
-                document.getElementById('rewardPerShare').value = rate.toFixed(6);
-                if (line) line.textContent = `Auto: ${localPoolStats.total_reward_bdag.toFixed(4)} BDAG ÷ ${lastAccepted} shares`;
-                updateEstimate(lastAccepted);
-                updateDailyEarnings(lastAccepted, lastUptime);
-            } else {
-                if (line) line.textContent = localPoolStats.total_blocks === 0 ? 'Waiting for first block…' : 'No reward data yet';
-            }
-            updateBlocksCard(localPoolStats);
-        }
-
-        function updateBlocksCard(stats) {
-            const card   = document.getElementById('blocksCard');
-            const count  = document.getElementById('blocksCount');
-            const sub    = document.getElementById('blocksSub');
-            const recent = document.getElementById('blocksRecent');
-            if (!card) return;
-            const n = stats.total_blocks || 0;
-            if (n === 0) {
-                card.style.borderColor = ''; card.style.background = ''; card.style.boxShadow = '';
-                count.textContent = '0'; count.style.color = 'var(--text-primary)';
-                sub.textContent = 'No blocks found yet — keep mining!';
-                sub.className = 'earnings-status pending';
-                recent.textContent = '';
-                return;
-            }
-            card.style.borderColor = 'hsla(142, 71%, 45%, 0.5)';
-            card.style.background  = 'hsla(142, 71%, 45%, 0.06)';
-            card.style.boxShadow   = '0 0 24px hsla(142, 71%, 45%, 0.1)';
-            count.textContent = n; count.style.color = 'hsl(142, 71%, 55%)';
-            sub.textContent = `${(stats.total_reward_bdag || 0).toFixed(4)} BDAG earned`;
-            sub.className = 'earnings-status ok';
-            const recents = stats.recent_blocks || [];
-            if (recents.length > 0) {
-                const last = recents[0];
-                const height = last.height ? `#${last.height}` : '';
-                const reward = last.reward_bdag != null ? ` · ${parseFloat(last.reward_bdag).toFixed(2)} BDAG` : '';
-                const when   = last.created_at ? last.created_at.slice(0, 16) : '';
-                recent.innerHTML = `Last block ${height}${reward}<br><span style="color:var(--text-dim)">${when}</span>`;
-            } else { recent.textContent = ''; }
-        }
-
-        function startLocalPoolPoll() {
-            if (localPoolPollTimer) return;
-            pollLocalPoolStats();
-            localPoolPollTimer = setInterval(pollLocalPoolStats, 60000);
-        }
-
-        function stopLocalPoolPoll() {
-            if (!localPoolPollTimer) return;
-            clearInterval(localPoolPollTimer);
-            localPoolPollTimer = null; localPoolStats = null;
-            const line = document.getElementById('rateSourceLine');
-            if (line) line.textContent = '';
-        }
-
-        // ── Daily Earnings ──────────────────────────────────────────
-
-        function updateDailyEarnings(accepted, uptime) {
-            const el = document.getElementById('dailyEarnings');
-            if (!el) return;
-            const rate = parseFloat(document.getElementById('rewardPerShare').value) || 0;
-            const sub  = document.getElementById('dailyEarningsSub');
-            if (!rate || !uptime || !accepted) {
-                el.innerHTML = `-- <span class="earnings-unit">BDAG</span>`;
-                sub.textContent = 'Based on shares/uptime';
-                sub.className = 'earnings-status pending';
-                return;
-            }
-            const sharesPerSec = accepted / uptime;
-            const daily = sharesPerSec * 86400 * rate;
-            el.innerHTML = `${daily.toFixed(2)} <span class="earnings-unit">BDAG</span>`;
-            sub.textContent = `~${(sharesPerSec * 3600).toFixed(2)} shares/hr`;
-            sub.className = 'earnings-status ok';
         }
 
         function timeAgo(ts) {
@@ -1520,43 +1315,6 @@
             } else { el.className = 'stat-value'; sub.textContent = `${usedMB.toFixed(0)} MB used`; }
         }
 
-        // ── BDAG Earnings ───────────────────────────────────────────
-
-        function extractPoolHost(poolStr) {
-            try { const cleaned = poolStr.replace(/^[a-z+]+:\/\//i, ''); return cleaned.split(':')[0]; } catch { return null; }
-        }
-
-        async function fetchPoolBDAG(wallet, poolHost) {
-            const candidates = [
-                `https://${poolHost}/api/accounts/${wallet}`,
-                `https://${poolHost}/api/miner/${wallet}`,
-                `https://${poolHost}/api/miners/${wallet}`,
-                `https://${poolHost}/miners/${wallet}`,
-            ];
-            for (const url of candidates) {
-                try {
-                    const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
-                    if (!resp.ok) continue;
-                    const d = await resp.json();
-                    const val = d.paid ?? d.balance ?? d.total_paid ?? d.earnings ?? d.bdag_earned ?? null;
-                    if (val !== null) return { value: parseFloat(val), url };
-                } catch (e) {}
-            }
-            return null;
-        }
-
-        function updateEstimate(accepted) {
-            const rate = parseFloat(document.getElementById('rewardPerShare').value) || 0;
-            const est = accepted * rate;
-            document.getElementById('bdagEstimate').innerHTML = `${est.toFixed(4)} <span class="earnings-unit">BDAG</span>`;
-            const s = document.getElementById('bdagEstimateStatus');
-            s.textContent = `${accepted} shares × ${rate} BDAG/share`;
-            s.className = 'earnings-status ok';
-        }
-
-        document.getElementById('rewardPerShare').addEventListener('input', () => { updateEstimate(lastAccepted); });
-
-
         // ── Main poll loop ──────────────────────────────────────────
 
         async function fetchMetrics() {
@@ -1627,7 +1385,6 @@
                     }
                 }
                 lastRejected = data.rejected;
-                updateEstimate(data.accepted);
                 hashrateHistory.push({ time: Date.now(), total: data.hashrate, cpu: data.cpu_hashrate || 0, gpu: data.gpu_hashrate || 0 });
                 if (hashrateHistory.length > MAX_CHART_POINTS) hashrateHistory = hashrateHistory.slice(-MAX_CHART_POINTS);
                 drawChart();
