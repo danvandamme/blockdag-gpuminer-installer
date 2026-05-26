@@ -36,15 +36,15 @@ REM ── Confirm ────────────────────�
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$t = Get-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue;" ^
     "if ($t) {" ^
-    "    $proc = Get-CimInstance Win32_Process -Filter ""Name='powershell.exe'"" |" ^
-    "            Where-Object { $_.CommandLine -like '*dagtech-control*' };" ^
+    "    $proc = Get-CimInstance Win32_Process |" ^
+    "            Where-Object { $_.Name -in 'powershell.exe','pwsh.exe' -and $_.CommandLine -like '*dagtech-control*' };" ^
     "    if ($proc) {" ^
-    "        Write-Host ('  [OK] Control server running (PID ' + ($proc | Select-Object -First 1 -ExpandProperty ProcessId) + ')') -ForegroundColor Green" ^
+    "        Write-Host ('  [OK] Control server running (PID ' + ($proc | Select-Object -First 1 -ExpandProperty ProcessId) + ')') -ForegroundColor Green;" ^
     "    } else {" ^
-    "        Write-Host '  [--] Task started but control server process not found yet - may still be starting.' -ForegroundColor Yellow" ^
+    "        Write-Host '  [--] Task started but process not found yet - may still be starting.' -ForegroundColor Yellow;" ^
     "    }" ^
     "} else {" ^
-    "    Write-Host '  [WARN] Scheduled task not found - is the miner installed?' -ForegroundColor Red" ^
+    "    Write-Host '  [WARN] Scheduled task not found - is the miner installed?' -ForegroundColor Red;" ^
     "}"
 
 echo.
