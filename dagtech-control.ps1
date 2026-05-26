@@ -707,8 +707,8 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                             $fs.Close(); $resp2.Close()
                             Write-Log "Update: downloaded $($dl.src)"
                         } catch {
-                            $errors.Add("$($dl.src): $($_.Exception.Message -replace '"',"'")")
-                            Write-Log "Update: failed $($dl.src) — $_"
+                            $errors.Add($dl.src + ': ' + ($_.Exception.Message -replace '"',"'"))
+                            Write-Log ('Update: failed ' + $dl.src + ' - ' + $_)
                         }
                     }
                     # ─ Update INSTALLER_VERSION in config.env ────────────────────────────
@@ -720,7 +720,7 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                         })
                         if (-not $found) { $newCfgLines += "INSTALLER_VERSION=$latestVer" }
                         [System.IO.File]::WriteAllLines($script:CONFIG, $newCfgLines, (New-Object System.Text.UTF8Encoding $false))
-                    } catch { $errors.Add("config.env: $($_.Exception.Message -replace '"',"'")") }
+                    } catch { $errors.Add('config.env: ' + ($_.Exception.Message -replace '"',"'")) }
                     # ─ Restart miner if it was running ───────────────────────────────────
                     if ($wasRunning -and -not (Test-Path $script:STOPFILE)) { Start-MinerProcess }
                     $hasCtrl  = (Test-Path (Join-Path $script:BASE "bin\dagtech-control.ps1.new")).ToString().ToLower()
