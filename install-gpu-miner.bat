@@ -304,6 +304,7 @@ if exist "%CONFIG_FILE%" (
         if "%%k"=="THREADS"      set "DEF_THREADS=%%l"
         if "%%k"=="POOL_PASSWORD" set "DEF_PASSWORD=%%l"
         if "%%k"=="GPU_INTENSITY" set "DEF_GPU_INT=%%l"
+        if "%%k"=="GPU_THROTTLE" set "DEF_GPU_THROTTLE=%%l"
         if "%%k"=="START_MODE"    set "DEF_START_MODE=%%l"
     )
     echo [GPU Miner] Loaded defaults from existing config.
@@ -386,6 +387,12 @@ set /p "GPU_INT_INPUT=  GPU intensity 0-100 (default !DEF_GPU_INT!): "
 if "!GPU_INT_INPUT!"=="" (set "GPU_INT=!DEF_GPU_INT!") else (set "GPU_INT=!GPU_INT_INPUT!")
 
 echo.
+if not defined DEF_GPU_THROTTLE set "DEF_GPU_THROTTLE=100"
+echo   GPU throttle limits GPU duty cycle to reduce heat (100 = no limit).
+set /p "GPU_THROTTLE_INPUT=  GPU throttle 5-100 (default !DEF_GPU_THROTTLE!): "
+if "!GPU_THROTTLE_INPUT!"=="" (set "GPU_THROTTLE=!DEF_GPU_THROTTLE!") else (set "GPU_THROTTLE=!GPU_THROTTLE_INPUT!")
+
+echo.
 set "DEF_PASSWORD_SHOW="
 if defined DEF_PASSWORD set "DEF_PASSWORD_SHOW=!DEF_PASSWORD!"
 set /p "PASSWORD_INPUT=  Pool password (default: blank): "
@@ -403,6 +410,7 @@ echo   Worker      : %WORKER%
 echo   Password    : %PASSWORD%
 echo   CPU Threads : %THREADS%
 echo   GPU Intensity: %GPU_INT%
+echo   GPU Throttle : %GPU_THROTTLE%%%
 echo.
 
 REM ---- Start mode -----------------------------------------------------------
@@ -420,6 +428,20 @@ if /i "!START_MODE_CHOICE!"=="login" (
 if "!SM_INPUT!"=="2" ( set "START_MODE_CHOICE=login" ) else if "!SM_INPUT!"=="1" ( set "START_MODE_CHOICE=service" )
 echo   Start mode: !START_MODE_CHOICE!
 echo.
+
+REM ============================================================================
+REM 4b. Stop any running miner BEFORE touching the binary
+REM     (dagtech-gpu-miner.exe is locked while running; copy silently fails)
+REM ============================================================================
+echo [GPU Miner] Stopping any running miner instance...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "Stop-ScheduledTask -TaskName 'DagTech GPU Miner' -ErrorAction SilentlyContinue;" ^
+    "$pidFile='%INSTALL_DIR%\logs\control.pid';" ^
+    "if (Test-Path $pidFile) { try { $p=Get-Process -Id ([int](Get-Content $pidFile -Raw).Trim()) -ErrorAction Stop; $p | Stop-Process -Force; Start-Sleep -Milliseconds 800 } catch {} };" ^
+    "Get-Process -Name 'dagtech-gpu-miner' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;" ^
+    "Get-CimInstance Win32_Process -Filter ""Name='powershell.exe'"" | Where-Object { $_.CommandLine -like '*dagtech-control*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue };" ^
+    "Start-Sleep -Milliseconds 500" 2>nul
+echo [GPU Miner] Miner stopped.
 
 REM ============================================================================
 REM 5. Create directories
@@ -507,6 +529,7 @@ echo CPU_LIMIT=100
 echo METRICS_PORT=8882
 echo GPU_ENABLED=1
 echo GPU_INTENSITY=!GPU_INT!
+echo GPU_THROTTLE=!GPU_THROTTLE!
 echo GPU_VRAM_MB=!GPU_VRAM_MB!
 echo GPU_REC_INTENSITY=!REC_GPU_INT!
 echo GPU_PLATFORM=0
