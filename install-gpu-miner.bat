@@ -368,7 +368,7 @@ if "!GPU_VRAM_MB!"=="0" (
 REM Calculate recommended intensity from V-buffer formula:
 REM   V-buffer = 2^E * 128 KB, where E = floor(14 + intensity/100*6 + 0.5)
 REM   Target: use up to 75%% of VRAM so the buffer fits with headroom.
-set "REC_GPU_INT=10"
+set "REC_GPU_INT=8"
 if "!GPU_VRAM_MB!"=="0" goto :vram_fallback
 for /f "tokens=*" %%i in ('powershell -NoProfile -Command "$v=[long]'!GPU_VRAM_MB!'; $t=$v*1048576*0.75; $e=[Math]::Floor([Math]::Log($t/131072)/[Math]::Log(2)); if($e -lt 14){$e=14}; $i=[int][Math]::Floor(($e-13.5)*100.0/6.0-0.001); if($i -lt 5){$i=5}; if($i -gt 95){$i=95}; $i" 2^>nul') do set "REC_GPU_INT=%%i"
 if not "!GPU_VRAM_NAME!"=="" echo   GPU  : !GPU_VRAM_NAME!

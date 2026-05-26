@@ -106,7 +106,7 @@ function Detect-GpuVram {
 
     # Compute recommended intensity from V-buffer formula (75% of VRAM target)
     # V-buffer bytes = 2^E * 128 KB  (E = 14 + intensity/100*6)
-    $recInt = 10  # safe fallback when VRAM unknown
+    $recInt = 8   # safe fallback when VRAM unknown
     if ($vramMb -gt 0) {
         $target = [double]$vramMb * 1048576.0 * 0.75
         $e = [Math]::Floor([Math]::Log($target / 131072.0) / [Math]::Log(2.0))
