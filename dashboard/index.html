@@ -350,6 +350,33 @@
 
         /* Control buttons */
         .header-right { display: flex; align-items: center; gap: 10px; }
+        .btn-update {
+            background: rgba(16, 185, 129, 0.12);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+        .btn-update:hover { background: rgba(16, 185, 129, 0.22); border-color: rgba(16, 185, 129, 0.5); }
+        .btn-update.checking { opacity: 0.6; cursor: default; pointer-events: none; }
+        /* Update modal */
+        #updateModal .update-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 0; border-bottom: 1px solid var(--border-color); font-size: 13px;
+        }
+        #updateModal .update-row:last-of-type { border-bottom: none; }
+        #updateModal .update-label { color: var(--text-secondary); }
+        #updateModal .update-val   { color: var(--text-primary); font-weight: 500; }
+        #updateModal .update-val.new-ver { color: #10b981; }
+        #updateModal .update-val.same-ver { color: var(--text-dim); }
+        #updateModal .update-status {
+            margin-top: 14px; padding: 10px 14px; border-radius: 8px;
+            font-size: 12px; background: rgba(59,130,246,0.08);
+            border: 1px solid rgba(59,130,246,0.2); color: var(--text-secondary);
+            min-height: 36px; word-break: break-word;
+        }
+        #updateModal .update-status.ok   { background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.25); color: #10b981; }
+        #updateModal .update-status.err  { background: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.25);  color: #ef4444; }
+        #updateModal .update-actions { display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
+        #updateModal .update-actions button { flex: 1; min-width: 120px; }
         .control-btn {
             padding: 7px 14px;
             border-radius: 8px;
@@ -522,6 +549,7 @@
                 </div>
             </div>
             <div class="header-right">
+                <button class="control-btn btn-update" id="btnUpdate" onclick="openUpdate()" title="Check for software updates">&#8593; Update</button>
                 <button class="control-btn btn-logs" onclick="openLogs()" title="Open live log window">&#9776; Logs</button>
                 <button class="control-btn btn-config" onclick="openConfig()" title="Configure miner">&#9881; Config</button>
                 <button class="control-btn btn-start"   id="btnStart"   onclick="controlMiner('start')"   title="Start miner">&#9654; Start</button>
@@ -636,6 +664,27 @@
                     </div>
                 </div>
                 <div class="log-modal-console" id="logModalConsole"><span style="color:var(--text-dim)">Loading...</span></div>
+            </div>
+        </div>
+
+        <!-- Update Modal -->
+        <div class="modal-overlay" id="updateModal" onclick="if(event.target===this)closeUpdate()">
+            <div class="modal" style="max-width:420px">
+                <div class="modal-title">&#8593; Software Update</div>
+                <div class="update-row">
+                    <span class="update-label">Current version</span>
+                    <span class="update-val" id="updCurrentVer">—</span>
+                </div>
+                <div class="update-row">
+                    <span class="update-label">Latest version</span>
+                    <span class="update-val" id="updLatestVer">Checking…</span>
+                </div>
+                <div class="update-status" id="updStatus">Fetching version info…</div>
+                <div class="update-actions">
+                    <button class="form-btn" id="btnApplyUpdate" onclick="applyUpdate()" style="display:none">&#8595; Apply Update</button>
+                    <button class="form-btn" id="btnRestartServer" onclick="restartControlServer()" style="display:none;background:rgba(245,158,11,0.15);border-color:rgba(245,158,11,0.3);color:#f59e0b">&#8635; Restart Control Server</button>
+                    <button class="form-btn form-btn-cancel" onclick="closeUpdate()">Close</button>
+                </div>
             </div>
         </div>
 
@@ -1656,6 +1705,112 @@
         }
 
         function closeConfig() { document.getElementById('configModal').classList.remove('open'); }
+
+        function openUpdate() {
+            document.getElementById('updCurrentVer').textContent = '—';
+            document.getElementById('updLatestVer').textContent = 'Checking…';
+            document.getElementById('updStatus').textContent = 'Fetching version info…';
+            document.getElementById('updStatus').className = 'update-status';
+            document.getElementById('btnApplyUpdate').style.display = 'none';
+            document.getElementById('btnRestartServer').style.display = 'none';
+            document.getElementById('updateModal').classList.add('open');
+            checkForUpdate();
+        }
+        function closeUpdate() { document.getElementById('updateModal').classList.remove('open'); }
+
+        async function checkForUpdate() {
+            const btnU = document.getElementById('btnUpdate');
+            btnU.classList.add('checking');
+            try {
+                const resp = await fetch(`${CONTROL_URL}/update-check`, { signal: AbortSignal.timeout(10000) });
+                const data = await resp.json();
+                if (data.error) throw new Error(data.error);
+                document.getElementById('updCurrentVer').textContent = data.current || '—';
+                const latEl = document.getElementById('updLatestVer');
+                latEl.textContent = data.latest || '—';
+                if (data.up_to_date) {
+                    latEl.className = 'update-val same-ver';
+                    document.getElementById('updStatus').textContent = '✓ You are on the latest version.';
+                    document.getElementById('updStatus').className = 'update-status ok';
+                    document.getElementById('btnApplyUpdate').style.display = 'none';
+                } else {
+                    latEl.className = 'update-val new-ver';
+                    document.getElementById('updStatus').textContent = `New version available: ${data.current} → ${data.latest}`;
+                    document.getElementById('updStatus').className = 'update-status';
+                    document.getElementById('btnApplyUpdate').style.display = '';
+                }
+            } catch(e) {
+                document.getElementById('updStatus').textContent = `Error checking for updates: ${e.message}`;
+                document.getElementById('updStatus').className = 'update-status err';
+            } finally {
+                btnU.classList.remove('checking');
+            }
+        }
+
+        async function applyUpdate() {
+            const btn = document.getElementById('btnApplyUpdate');
+            btn.disabled = true; btn.textContent = '↓ Downloading…';
+            document.getElementById('updStatus').textContent = 'Downloading update — miner will briefly stop…';
+            document.getElementById('updStatus').className = 'update-status';
+            try {
+                const resp = await fetch(`${CONTROL_URL}/update`, { method: 'POST', signal: AbortSignal.timeout(120000) });
+                const data = await resp.json();
+                if (!data.ok && data.error) throw new Error(data.error);
+                if (data.status === 'up_to_date') {
+                    document.getElementById('updStatus').textContent = '✓ Already on the latest version.';
+                    document.getElementById('updStatus').className = 'update-status ok';
+                } else {
+                    let msg = `✓ Updated: ${data.from} → ${data.to}`;
+                    if (data.errors) msg += `\n⚠ Some files failed: ${data.errors}`;
+                    document.getElementById('updStatus').textContent = msg;
+                    document.getElementById('updStatus').className = data.errors ? 'update-status' : 'update-status ok';
+                    document.getElementById('updCurrentVer').textContent = data.to;
+                    document.getElementById('updLatestVer').className = 'update-val same-ver';
+                    document.getElementById('btnApplyUpdate').style.display = 'none';
+                    if (data.restart_required) {
+                        document.getElementById('btnRestartServer').style.display = '';
+                        document.getElementById('updStatus').textContent += '\nControl server update pending — restart to apply.';
+                    }
+                }
+            } catch(e) {
+                document.getElementById('updStatus').textContent = `Update failed: ${e.message}`;
+                document.getElementById('updStatus').className = 'update-status err';
+            } finally {
+                btn.disabled = false; btn.textContent = '↓ Apply Update';
+            }
+        }
+
+        async function restartControlServer() {
+            const btn = document.getElementById('btnRestartServer');
+            btn.disabled = true; btn.textContent = '↺ Restarting…';
+            document.getElementById('updStatus').textContent = 'Restarting control server…';
+            document.getElementById('updStatus').className = 'update-status';
+            try {
+                await fetch(`${CONTROL_URL}/restart-server`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+            } catch(_) { /* expected — server restarts */ }
+            // Poll until the server comes back
+            document.getElementById('updStatus').textContent = 'Waiting for control server to restart…';
+            let attempts = 0;
+            const poll = setInterval(async () => {
+                attempts++;
+                try {
+                    const r = await fetch(`${CONTROL_URL}/status`, { signal: AbortSignal.timeout(2000) });
+                    if (r.ok) {
+                        clearInterval(poll);
+                        document.getElementById('updStatus').textContent = '✓ Control server restarted successfully.';
+                        document.getElementById('updStatus').className = 'update-status ok';
+                        document.getElementById('btnRestartServer').style.display = 'none';
+                        btn.disabled = false; btn.textContent = '↺ Restart Control Server';
+                    }
+                } catch(_) {}
+                if (attempts > 30) {
+                    clearInterval(poll);
+                    document.getElementById('updStatus').textContent = 'Server did not respond in 30s — check manually.';
+                    document.getElementById('updStatus').className = 'update-status err';
+                    btn.disabled = false; btn.textContent = '↺ Restart Control Server';
+                }
+            }, 1000);
+        }
 
         async function saveConfig() {
             const btn    = document.getElementById('btnSaveConfig');

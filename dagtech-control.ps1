@@ -12,8 +12,23 @@ $script:STOPFILE   = Join-Path $BaseDir "logs\.stop"
 $script:MINERPIDF  = Join-Path $BaseDir "logs\miner.pid"
 $PIDFILE           = Join-Path $BaseDir "logs\control.pid"
 $script:TASK_NAME  = "DagTech GPU Miner"
+$script:CTRL_SCRIPT     = Join-Path $BaseDir "bin\dagtech-control.ps1"
+$script:PENDING_NEW     = Join-Path $BaseDir "bin\dagtech-control.ps1.new"
+$script:PendingRestart  = $false
 
 if (-not (Test-Path $script:LOGDIR)) { New-Item -ItemType Directory -Path $script:LOGDIR | Out-Null }
+
+# ── Apply any pending control-script update ──────────────────────────────────
+# Downloaded by /update as .new; renamed here at next startup so the running
+# script is never overwritten while in use (Windows allows renaming open files).
+if (Test-Path $script:PENDING_NEW) {
+    try {
+        Move-Item $script:PENDING_NEW $script:CTRL_SCRIPT -Force -ErrorAction Stop
+        Write-Host "[DagTech GPU] Pending control server update applied."
+    } catch {
+        Write-Host "[DagTech GPU] Warning: could not apply pending control update: $_"
+    }
+}
 
 # ── Single-instance guard ────────────────────────────────────────────────────
 # If a previous instance wrote a PID file and that process is still alive,
@@ -631,6 +646,101 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                 Send-Response $ctx ('{' + ($kvs -join ',') + '}')
                 break
             }
+            "/update-check" {
+                try {
+                    $wr = [System.Net.HttpWebRequest]::Create("https://raw.githubusercontent.com/danvandamme/blockdag-GPU-miner-installer/main/VERSION")
+                    $wr.Timeout = 8000; $wr.ReadWriteTimeout = 8000; $wr.Method = "GET"; $wr.Proxy = $null
+                    $resp   = $wr.GetResponse()
+                    $reader = [System.IO.StreamReader]::new($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+                    $latestVer = $reader.ReadToEnd().Trim()
+                    $reader.Close(); $resp.Close()
+                    $cfg = Read-Config
+                    $currentVer = if ($cfg["INSTALLER_VERSION"]) { $cfg["INSTALLER_VERSION"] } else { "unknown" }
+                    $upToDate = ($latestVer -eq $currentVer).ToString().ToLower()
+                    Send-Response $ctx ('{"current":"' + ($currentVer -replace '"',"'") + '","latest":"' + ($latestVer -replace '"',"'") + '","up_to_date":' + $upToDate + '}')
+                } catch {
+                    $msg = $_.Exception.Message -replace '"',"'" -replace '\r?\n',' '
+                    Send-Response $ctx ('{"error":"' + $msg + '"}') 500
+                }
+                break
+            }
+            "/update" {
+                if ($method -ne "POST") { Send-Response $ctx '{"error":"POST required"}' 405; break }
+                try {
+                    $ghBase = "https://raw.githubusercontent.com/danvandamme/blockdag-GPU-miner-installer/main"
+                    # ─ Fetch latest version ──────────────────────────────────────────────
+                    $wr = [System.Net.HttpWebRequest]::Create("$ghBase/VERSION")
+                    $wr.Timeout = 10000; $wr.ReadWriteTimeout = 10000; $wr.Method = "GET"; $wr.Proxy = $null
+                    $resp   = $wr.GetResponse()
+                    $reader = [System.IO.StreamReader]::new($resp.GetResponseStream(), [System.Text.Encoding]::UTF8)
+                    $latestVer = $reader.ReadToEnd().Trim()
+                    $reader.Close(); $resp.Close()
+                    $cfg = Read-Config
+                    $currentVer = if ($cfg["INSTALLER_VERSION"]) { $cfg["INSTALLER_VERSION"] } else { "unknown" }
+                    if ($currentVer -eq $latestVer) {
+                        Send-Response $ctx ('{"ok":true,"status":"up_to_date","version":"' + $currentVer + '"}')
+                        break
+                    }
+                    # ─ Stop miner to release binary file lock ────────────────────────────
+                    $wasRunning = $null -ne (Get-MinerProcess)
+                    if ($wasRunning) {
+                        Get-Process -Name 'dagtech-gpu-miner' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+                        Remove-Item $script:MINERPIDF -Force -ErrorAction SilentlyContinue
+                        Start-Sleep -Milliseconds 1500
+                    }
+                    # ─ Download files ────────────────────────────────────────────────────
+                    $downloads = @(
+                        @{ src = "dashboard/index.html";  dst = "dashboard\index.html" },
+                        @{ src = "dagtech-start.bat";     dst = "bin\dagtech-start.bat" },
+                        @{ src = "dagtech-gpu-miner.exe"; dst = "bin\dagtech-gpu-miner.exe" },
+                        @{ src = "dagtech-control.ps1";   dst = "bin\dagtech-control.ps1.new" }
+                    )
+                    $errors = [System.Collections.Generic.List[string]]::new()
+                    foreach ($dl in $downloads) {
+                        try {
+                            $destPath = Join-Path $script:BASE $dl.dst
+                            $wr2 = [System.Net.HttpWebRequest]::Create("$ghBase/$($dl.src)")
+                            $wr2.Timeout = 60000; $wr2.ReadWriteTimeout = 60000; $wr2.Method = "GET"; $wr2.Proxy = $null
+                            $resp2 = $wr2.GetResponse()
+                            $fs = [System.IO.File]::Open($destPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                            $resp2.GetResponseStream().CopyTo($fs)
+                            $fs.Close(); $resp2.Close()
+                            Write-Log "Update: downloaded $($dl.src)"
+                        } catch {
+                            $errors.Add("$($dl.src): $($_.Exception.Message -replace '"',"'")")
+                            Write-Log "Update: failed $($dl.src) — $_"
+                        }
+                    }
+                    # ─ Update INSTALLER_VERSION in config.env ────────────────────────────
+                    try {
+                        $cfgLines = @(Get-Content $script:CONFIG)
+                        $found = $false
+                        $newCfgLines = @(foreach ($line in $cfgLines) {
+                            if ($line -match '^INSTALLER_VERSION=') { "INSTALLER_VERSION=$latestVer"; $found = $true } else { $line }
+                        })
+                        if (-not $found) { $newCfgLines += "INSTALLER_VERSION=$latestVer" }
+                        [System.IO.File]::WriteAllLines($script:CONFIG, $newCfgLines, (New-Object System.Text.UTF8Encoding $false))
+                    } catch { $errors.Add("config.env: $($_.Exception.Message -replace '"',"'")") }
+                    # ─ Restart miner if it was running ───────────────────────────────────
+                    if ($wasRunning -and -not (Test-Path $script:STOPFILE)) { Start-MinerProcess }
+                    $hasCtrl  = (Test-Path (Join-Path $script:BASE "bin\dagtech-control.ps1.new")).ToString().ToLower()
+                    $errStr   = if ($errors.Count -gt 0) { '"' + ($errors -join '; ') + '"' } else { 'null' }
+                    Write-Log "Update applied: $currentVer -> $latestVer"
+                    Send-Response $ctx ('{"ok":true,"status":"updated","from":"' + $currentVer + '","to":"' + $latestVer + '","restart_required":' + $hasCtrl + ',"errors":' + $errStr + '}')
+                } catch {
+                    $msg = $_.Exception.Message -replace '"',"'" -replace '\r?\n',' '
+                    Write-Log "Update error: $_"
+                    Send-Response $ctx ('{"error":"' + $msg + '"}') 500
+                }
+                break
+            }
+            "/restart-server" {
+                if ($method -ne "POST") { Send-Response $ctx '{"error":"POST required"}' 405; break }
+                Send-Response $ctx '{"ok":true}'
+                $script:PendingRestart = $true
+                $listener.Stop()
+                break
+            }
             default {
                 Send-Response $ctx '{"error":"not found"}' 404
                 break
@@ -651,6 +761,17 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
             Start-MinerProcess
         }
     }
+}
+
+# Spawn a fresh control server if a restart was requested (update applied)
+if ($script:PendingRestart) {
+    Remove-Item $PIDFILE -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 400
+    Start-Process powershell -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+        "-File", $script:CTRL_SCRIPT, "-BaseDir", $script:BASE
+    ) -ErrorAction SilentlyContinue
+    Write-Log "Control server respawn initiated."
 }
 
 Write-Log "Control server stopped."
