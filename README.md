@@ -196,20 +196,31 @@ The installer recommends an intensity that uses ~75% of detected VRAM. If VRAM d
 
 ---
 
-### Windows Defender blocking the miner
+### Antivirus blocking or quarantining the miner
 
-The installer adds Defender exclusions automatically. If Defender removes the binary after install:
+Mining software is frequently flagged as a false positive by antivirus programs because it uses the GPU intensively and communicates with external pool servers. The miner binary is clean — add an exclusion rather than allowing individual detections, as the exclusion persists across updates.
+
+**Windows Defender** — handled automatically by the installer. If Defender removes the binary anyway:
 
 1. Open **Windows Security** → **Virus & threat protection** → **Protection history**
 2. Find the quarantined item and select **Allow**
 3. Re-run the installer to restore the binary
 
-To add exclusions manually in PowerShell (elevated):
+To add Defender exclusions manually in PowerShell (elevated):
 
 ```powershell
 Add-MpPreference -ExclusionPath "C:\dagtech-gpu-miner"
 Add-MpPreference -ExclusionProcess "C:\dagtech-gpu-miner\bin\dagtech-gpu-miner.exe"
 ```
+
+**ESET** (and other third-party AV) — the installer cannot configure these automatically. Add an exclusion manually:
+
+1. Open ESET → **Setup** → **Advanced Setup** (F5)
+2. Go to **Detection Engine** → **Exclusions**
+3. Add the folder `C:\dagtech-gpu-miner` as an exclusion
+4. If the binary was already quarantined, restore it from the ESET quarantine before re-running the installer
+
+**Note:** If the antivirus quarantines the miner binary, the watchdog auto-restart will fail silently because the `.exe` is missing. Always check the AV quarantine first if the miner stops and the watchdog does not bring it back.
 
 ---
 
