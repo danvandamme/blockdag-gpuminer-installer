@@ -824,10 +824,17 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                     }
                     # ─ Download files ────────────────────────────────────────────────────
                     $downloads = @(
-                        @{ src = "dashboard/index.html";  dst = "dashboard\index.html" },
-                        @{ src = "dagtech-start.bat";     dst = "bin\dagtech-start.bat" },
-                        @{ src = "dagtech-gpu-miner.exe"; dst = "bin\dagtech-gpu-miner.exe" },
-                        @{ src = "dagtech-control.ps1";   dst = "bin\dagtech-control.ps1.new" }
+                        @{ src = "dashboard/index.html";        dst = "dashboard\index.html" },
+                        @{ src = "dashboard/logo.ico";          dst = "dashboard\logo.ico" },
+                        @{ src = "dashboard/logo.png";          dst = "dashboard\logo.png" },
+                        @{ src = "dagtech-start.bat";           dst = "bin\dagtech-start.bat" },
+                        @{ src = "dagtech-stop.bat";            dst = "bin\dagtech-stop.bat" },
+                        @{ src = "dagtech-logs.bat";            dst = "bin\dagtech-logs.bat" },
+                        @{ src = "dagtech-restart-control.bat"; dst = "bin\dagtech-restart-control.bat" },
+                        @{ src = "dagtech-uninstall.bat";       dst = "bin\dagtech-uninstall.bat" },
+                        @{ src = "dagtech-force-stop.bat";      dst = "bin\dagtech-force-stop.bat" },
+                        @{ src = "dagtech-gpu-miner.exe";       dst = "bin\dagtech-gpu-miner.exe" },
+                        @{ src = "dagtech-control.ps1";         dst = "bin\dagtech-control.ps1.new" }
                     )
                     $errors = [System.Collections.Generic.List[string]]::new()
                     foreach ($dl in $downloads) {
@@ -855,6 +862,64 @@ Get-Content -Wait -Tail 50 `$log | ForEach-Object {
                         if (-not $found) { $newCfgLines += "INSTALLER_VERSION=$latestVer" }
                         [System.IO.File]::WriteAllLines($script:CONFIG, $newCfgLines, (New-Object System.Text.UTF8Encoding $false))
                     } catch { $errors.Add('config.env: ' + ($_.Exception.Message -replace '"',"'")) }
+                    # ─ Copy logo.ico to bin\ so shortcuts keep their icon ─────────────────
+                    $logoSrc = Join-Path $script:BASE "dashboard\logo.ico"
+                    $logoDst = Join-Path $script:BASE "bin\logo.ico"
+                    if (Test-Path $logoSrc) {
+                        try { Copy-Item $logoSrc $logoDst -Force } catch { $errors.Add('logo.ico: ' + ($_.Exception.Message -replace '"',"'")) }
+                    }
+                    # ─ Add any missing watchdog / new config keys ────────────────────────
+                    try {
+                        $wdDefaults = [ordered]@{
+                            WATCHDOG_RESTART_DELAY  = "60"
+                            WATCHDOG_RETRY_INTERVAL = "300"
+                            WATCHDOG_MAX_RETRIES    = "0"
+                        }
+                        $wdLines    = @(Get-Content $script:CONFIG)
+                        $wdExisting = @($wdLines | ForEach-Object { if ($_ -match '^([A-Z_]+)=') { $Matches[1] } })
+                        $wdAdd      = @($wdDefaults.Keys | Where-Object { $wdExisting -notcontains $_ } | ForEach-Object { "$_=$($wdDefaults[$_])" })
+                        if ($wdAdd.Count -gt 0) {
+                            [System.IO.File]::WriteAllLines($script:CONFIG, ($wdLines + $wdAdd), (New-Object System.Text.UTF8Encoding $false))
+                            Write-Log "Update: added missing config keys: $($wdAdd -join ', ')"
+                        }
+                    } catch { $errors.Add('watchdog-config: ' + ($_.Exception.Message -replace '"',"'")) }
+                    # ─ Refresh "Miner Shortcuts" desktop folder and all shortcuts ─────────
+                    try {
+                        # Resolve the interactive user's desktop — works even when running as SYSTEM
+                        $wmiUser = (Get-CimInstance Win32_ComputerSystem -OperationTimeoutSec 5 -ErrorAction SilentlyContinue).UserName
+                        $desktopPath = if ($wmiUser) {
+                            $uname = $wmiUser.Split('\')[-1]
+                            $c = "C:\Users\$uname\Desktop"
+                            if (Test-Path $c) { $c } else { [Environment]::GetFolderPath('Desktop') }
+                        } else { [Environment]::GetFolderPath('Desktop') }
+
+                        $shortcutFolder = Join-Path $desktopPath "Miner Shortcuts"
+                        if (-not (Test-Path $shortcutFolder)) { New-Item -ItemType Directory -Path $shortcutFolder | Out-Null }
+
+                        # Remove old direct-on-desktop shortcuts left by pre-folder versions
+                        @('DagTech GPU Miner.lnk','DagTech GPU Miner - Stop.lnk','DagTech GPU Miner - Uninstall.lnk','DagTech GPU Miner - Logs.lnk','DagTech GPU Miner - Restart Control.lnk') | ForEach-Object {
+                            $old = Join-Path $desktopPath $_; if (Test-Path $old) { Remove-Item $old -Force }
+                        }
+
+                        $binDir   = Split-Path $script:BIN
+                        $iconPath = Join-Path $binDir "logo.ico"
+                        $sh       = New-Object -COM WScript.Shell
+                        @(
+                            @{ name = "DagTech GPU Miner.lnk";                   target = Join-Path $binDir "dagtech-start.bat";           desc = "Start DagTech GPU Miner" },
+                            @{ name = "DagTech GPU Miner - Stop.lnk";            target = Join-Path $binDir "dagtech-stop.bat";            desc = "Stop DagTech GPU Miner" },
+                            @{ name = "DagTech GPU Miner - Uninstall.lnk";       target = Join-Path $binDir "dagtech-uninstall.bat";       desc = "Uninstall DagTech GPU Miner" },
+                            @{ name = "DagTech GPU Miner - Logs.lnk";            target = Join-Path $binDir "dagtech-logs.bat";            desc = "View DagTech GPU Miner live log" },
+                            @{ name = "DagTech GPU Miner - Restart Control.lnk"; target = Join-Path $binDir "dagtech-restart-control.bat"; desc = "Restart DagTech GPU Miner control server" }
+                        ) | ForEach-Object {
+                            $lnk = $sh.CreateShortcut((Join-Path $shortcutFolder $_.name))
+                            $lnk.TargetPath       = $_.target
+                            $lnk.WorkingDirectory = $binDir
+                            $lnk.Description      = $_.desc
+                            if (Test-Path $iconPath) { $lnk.IconLocation = "$iconPath,0" }
+                            $lnk.Save()
+                        }
+                        Write-Log "Update: desktop shortcuts refreshed in 'Miner Shortcuts' folder."
+                    } catch { $errors.Add('shortcuts: ' + ($_.Exception.Message -replace '"',"'")); Write-Log "Update: shortcut refresh failed — $_" }
                     # ─ Restart miner if it was running ───────────────────────────────────
                     if ($wasRunning -and -not (Test-Path $script:STOPFILE)) { Start-MinerProcess }
                     $hasCtrl  = (Test-Path (Join-Path $script:BASE "bin\dagtech-control.ps1.new")).ToString().ToLower()
