@@ -387,7 +387,7 @@ set /p "GPU_INT_INPUT=  GPU intensity 0-100 (default !DEF_GPU_INT!): "
 if "!GPU_INT_INPUT!"=="" (set "GPU_INT=!DEF_GPU_INT!") else (set "GPU_INT=!GPU_INT_INPUT!")
 
 echo.
-if not defined DEF_GPU_THROTTLE set "DEF_GPU_THROTTLE=100"
+if not defined DEF_GPU_THROTTLE set "DEF_GPU_THROTTLE=80"
 echo   GPU throttle limits GPU duty cycle to reduce heat (100 = no limit).
 set /p "GPU_THROTTLE_INPUT=  GPU throttle 5-100 (default !DEF_GPU_THROTTLE!): "
 if "!GPU_THROTTLE_INPUT!"=="" (set "GPU_THROTTLE=!DEF_GPU_THROTTLE!") else (set "GPU_THROTTLE=!GPU_THROTTLE_INPUT!")
