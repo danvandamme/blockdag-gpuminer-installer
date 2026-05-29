@@ -85,7 +85,7 @@
 /* =========================================================================
  * DagTech GPU Miner Configuration
  * ========================================================================= */
-#define DAGTECH_VERSION       "GPU-2026.0526.4"
+#define DAGTECH_VERSION       "GPU-2026.0529.1"
 #define DAGTECH_BANNER        "DagTech GPU Miner v" DAGTECH_VERSION " - dagtech.network"
 #define DAGTECH_AUTHOR        "Dawie Nel / DagTech Ltd"
 #define DAGTECH_DEFAULT_POOL  "excalibur.dagtech.network"
@@ -114,10 +114,16 @@ static char dashboard_dir[512] = "";
 
 /* GPU configuration */
 static int gpu_enabled   = -1;  /* -1=auto, 0=disabled, 1=enabled */
-static int gpu_intensity = 80;  /* 0-100: work batch size / VRAM allocation */
-static int gpu_throttle  = 100; /* 5-100: duty-cycle limit; 100 = no sleep between kernels */
+static int gpu_intensity = 80;  /* 0-100 */
 static int gpu_platform  = 0;
-static int gpu_device    = 0;
+static int gpu_device    = 0;   /* single-GPU fallback */
+
+/* Multi-GPU: GPU_DEVICE=0,1 or GPU_DEVICE=all selects devices from gpu_platform */
+#define MAX_GPUS 8
+static int gpu_device_list[MAX_GPUS];
+static int gpu_device_count = 0;  /* 0 = use gpu_device (single) */
+static int gpu_use_all      = 0;  /* 1 = use every GPU on the platform */
+static int g_num_gpus       = 0;  /* GPUs successfully initialised */
 
 /* Stratum connection */
 static int sockfd = -1;
@@ -385,18 +391,24 @@ static void dagtech_hash(const uint8_t *input, uint8_t *output, uint32_t *V) {
  * ========================================================================= */
 #ifdef DAGTECH_GPU
 
-/* GPU global work size: intensity maps 0-100 to 2^14 - 2^20 */
-static size_t gpu_global_size = 65536;  /* updated at init from gpu_intensity */
+/* Per-GPU OpenCL state — one entry per active device */
+typedef struct {
+    cl_device_id     device;
+    cl_context       ctx;
+    cl_command_queue queue;
+    cl_program       program;
+    cl_kernel        kernel;
+    cl_mem           V_buf;
+    cl_mem           output_buf;
+    size_t           global_size;
+    int              platform_idx;
+    int              device_idx;
+    int              gpu_index;    /* 0-based position among active GPUs */
+    volatile int     ready;
+    char             name[256];
+} GpuCtx;
 
-static cl_platform_id   g_platform  = NULL;
-static cl_device_id     g_device    = NULL;
-static cl_context       g_ctx       = NULL;
-static cl_command_queue g_queue     = NULL;
-static cl_program       g_program   = NULL;
-static cl_kernel        g_kernel    = NULL;
-static cl_mem           g_V_buf     = NULL;
-static cl_mem           g_output_buf= NULL;
-static volatile int     gpu_ready   = 0;
+static GpuCtx g_gpus[MAX_GPUS];
 
 /* Compute global_size from intensity (0-100 -> 2^14 .. 2^20) */
 static size_t gpu_intensity_to_global_size(int intensity) {
@@ -472,133 +484,221 @@ static void gpu_list_devices(void) {
     free(platforms);
 }
 
-/* Initialize OpenCL: select platform/device, compile kernel, allocate V buffer */
-static int gpu_init(const char *exe_path) {
+/* Initialise a single GPU into ctx using a pre-loaded kernel source string */
+static int gpu_init_one(GpuCtx *ctx, cl_platform_id platform, int platform_idx,
+                        int device_idx, int gpu_index,
+                        const char *src, size_t src_len) {
     cl_int err;
 
-    /* Enumerate platforms */
-    cl_uint num_platforms = 0;
-    clGetPlatformIDs(0, NULL, &num_platforms);
-    if (num_platforms == 0) {
-        fprintf(stderr, "[DagTech GPU] No OpenCL platforms found.\n");
-        return -1;
-    }
-    if ((cl_uint)gpu_platform >= num_platforms) {
-        fprintf(stderr, "[DagTech GPU] Platform %d not available (only %u found).\n",
-                gpu_platform, num_platforms);
-        return -1;
-    }
-    cl_platform_id *platforms = (cl_platform_id *)malloc(num_platforms * sizeof(cl_platform_id));
-    clGetPlatformIDs(num_platforms, platforms, NULL);
-    g_platform = platforms[gpu_platform];
-    free(platforms);
-
-    /* Enumerate GPU devices on selected platform */
+    /* Select device */
     cl_uint num_devices = 0;
-    clGetDeviceIDs(g_platform, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices);
-    if (num_devices == 0) {
-        fprintf(stderr, "[DagTech GPU] No GPU devices on platform %d.\n", gpu_platform);
-        return -1;
-    }
-    if ((cl_uint)gpu_device >= num_devices) {
+    clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices);
+    if (num_devices == 0 || (cl_uint)device_idx >= num_devices) {
         fprintf(stderr, "[DagTech GPU] Device %d not available on platform %d (only %u found).\n",
-                gpu_device, gpu_platform, num_devices);
+                device_idx, platform_idx, num_devices);
         return -1;
     }
     cl_device_id *devices = (cl_device_id *)malloc(num_devices * sizeof(cl_device_id));
-    clGetDeviceIDs(g_platform, CL_DEVICE_TYPE_GPU, num_devices, devices, NULL);
-    g_device = devices[gpu_device];
+    clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, num_devices, devices, NULL);
+    ctx->device = devices[device_idx];
     free(devices);
 
-    char dev_name[256] = {0};
-    clGetDeviceInfo(g_device, CL_DEVICE_NAME, sizeof(dev_name), dev_name, NULL);
-    printf("[DagTech GPU] Using GPU: %s (platform %d, device %d)\n",
-           dev_name, gpu_platform, gpu_device);
+    ctx->platform_idx = platform_idx;
+    ctx->device_idx   = device_idx;
+    ctx->gpu_index    = gpu_index;
+    ctx->ready        = 0;
 
-    /* Create context and queue */
-    g_ctx = clCreateContext(NULL, 1, &g_device, NULL, NULL, &err);
-    if (err != CL_SUCCESS) { fprintf(stderr, "[DagTech GPU] clCreateContext failed: %d\n", err); return -1; }
-    g_queue = clCreateCommandQueue(g_ctx, g_device, 0, &err);
-    if (err != CL_SUCCESS) { fprintf(stderr, "[DagTech GPU] clCreateCommandQueue failed: %d\n", err); return -1; }
+    clGetDeviceInfo(ctx->device, CL_DEVICE_NAME, sizeof(ctx->name), ctx->name, NULL);
+    printf("[DagTech GPU] GPU %d: %s (platform %d, device %d)\n",
+           gpu_index, ctx->name, platform_idx, device_idx);
 
-    /* Load and compile kernel */
-    size_t src_len = 0;
-    char *src = gpu_load_kernel_source(exe_path, &src_len);
-    if (!src) return -1;
-
-    g_program = clCreateProgramWithSource(g_ctx, 1, (const char **)&src, &src_len, &err);
-    free(src);
-    if (err != CL_SUCCESS) { fprintf(stderr, "[DagTech GPU] clCreateProgramWithSource failed: %d\n", err); return -1; }
-
-    err = clBuildProgram(g_program, 1, &g_device, "-cl-std=CL1.2", NULL, NULL);
+    /* Per-GPU context and command queue */
+    ctx->ctx = clCreateContext(NULL, 1, &ctx->device, NULL, NULL, &err);
     if (err != CL_SUCCESS) {
-        size_t log_size = 0;
-        clGetProgramBuildInfo(g_program, g_device, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
-        char *log = (char *)malloc(log_size + 1);
-        if (log) {
-            clGetProgramBuildInfo(g_program, g_device, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
-            log[log_size] = '\0';
-            fprintf(stderr, "[DagTech GPU] Kernel build error:\n%s\n", log);
-            free(log);
-        }
+        fprintf(stderr, "[DagTech GPU] clCreateContext failed (GPU %d): %d\n", gpu_index, err);
+        return -1;
+    }
+    ctx->queue = clCreateCommandQueue(ctx->ctx, ctx->device, 0, &err);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[DagTech GPU] clCreateCommandQueue failed (GPU %d): %d\n", gpu_index, err);
+        clReleaseContext(ctx->ctx); ctx->ctx = NULL;
         return -1;
     }
 
-    g_kernel = clCreateKernel(g_program, "dagtech_search", &err);
-    if (err != CL_SUCCESS) { fprintf(stderr, "[DagTech GPU] clCreateKernel failed: %d\n", err); return -1; }
-
-    /* Compute global size from intensity */
-    gpu_global_size = gpu_intensity_to_global_size(gpu_intensity);
-    printf("[DagTech GPU] Global work size: %zu (intensity %d)\n", gpu_global_size, gpu_intensity);
-
-    /* Allocate V buffer: gpu_global_size work-items, each needs 1024*32 uint32s */
-    size_t v_bytes = (size_t)gpu_global_size * 1024 * 32 * sizeof(uint32_t);
-    printf("[DagTech GPU] Allocating V buffer: %.1f MB\n", v_bytes / (1024.0 * 1024.0));
-    g_V_buf = clCreateBuffer(g_ctx, CL_MEM_READ_WRITE, v_bytes, NULL, &err);
+    /* Compile kernel for this device */
+    ctx->program = clCreateProgramWithSource(ctx->ctx, 1, &src, &src_len, &err);
     if (err != CL_SUCCESS) {
-        fprintf(stderr, "[DagTech GPU] Failed to allocate V buffer (%zu bytes): %d\n", v_bytes, err);
-        fprintf(stderr, "[DagTech GPU] Try reducing --gpu-intensity.\n");
+        fprintf(stderr, "[DagTech GPU] clCreateProgramWithSource failed (GPU %d): %d\n", gpu_index, err);
+        clReleaseCommandQueue(ctx->queue); ctx->queue = NULL;
+        clReleaseContext(ctx->ctx);        ctx->ctx   = NULL;
+        return -1;
+    }
+    err = clBuildProgram(ctx->program, 1, &ctx->device, "-cl-std=CL1.2", NULL, NULL);
+    if (err != CL_SUCCESS) {
+        size_t log_size = 0;
+        clGetProgramBuildInfo(ctx->program, ctx->device, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+        char *log = (char *)malloc(log_size + 1);
+        if (log) {
+            clGetProgramBuildInfo(ctx->program, ctx->device, CL_PROGRAM_BUILD_LOG,
+                                  log_size, log, NULL);
+            log[log_size] = '\0';
+            fprintf(stderr, "[DagTech GPU] Kernel build error (GPU %d):\n%s\n", gpu_index, log);
+            free(log);
+        }
+        clReleaseProgram(ctx->program);    ctx->program = NULL;
+        clReleaseCommandQueue(ctx->queue); ctx->queue   = NULL;
+        clReleaseContext(ctx->ctx);        ctx->ctx     = NULL;
+        return -1;
+    }
+    ctx->kernel = clCreateKernel(ctx->program, "dagtech_search", &err);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[DagTech GPU] clCreateKernel failed (GPU %d): %d\n", gpu_index, err);
+        clReleaseProgram(ctx->program);    ctx->program = NULL;
+        clReleaseCommandQueue(ctx->queue); ctx->queue   = NULL;
+        clReleaseContext(ctx->ctx);        ctx->ctx     = NULL;
+        return -1;
+    }
+
+    /* Work size and V buffer */
+    ctx->global_size = gpu_intensity_to_global_size(gpu_intensity);
+    printf("[DagTech GPU] GPU %d: global work size %zu (intensity %d)\n",
+           gpu_index, ctx->global_size, gpu_intensity);
+
+    size_t v_bytes = ctx->global_size * 1024 * 32 * sizeof(cl_uint);
+    printf("[DagTech GPU] GPU %d: allocating V buffer %.1f MB\n",
+           gpu_index, v_bytes / (1024.0 * 1024.0));
+    ctx->V_buf = clCreateBuffer(ctx->ctx, CL_MEM_READ_WRITE, v_bytes, NULL, &err);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[DagTech GPU] V buffer failed (GPU %d, %zu bytes): %d\n"
+                        "[DagTech GPU] Try reducing --gpu-intensity.\n", gpu_index, v_bytes, err);
+        clReleaseKernel(ctx->kernel);      ctx->kernel  = NULL;
+        clReleaseProgram(ctx->program);    ctx->program = NULL;
+        clReleaseCommandQueue(ctx->queue); ctx->queue   = NULL;
+        clReleaseContext(ctx->ctx);        ctx->ctx     = NULL;
         return -1;
     }
 
     /* Output buffer: [0]=best_nonce, [1]=found_count */
-    g_output_buf = clCreateBuffer(g_ctx, CL_MEM_READ_WRITE, 2 * sizeof(cl_uint), NULL, &err);
-    if (err != CL_SUCCESS) { fprintf(stderr, "[DagTech GPU] clCreateBuffer(output) failed: %d\n", err); return -1; }
+    ctx->output_buf = clCreateBuffer(ctx->ctx, CL_MEM_READ_WRITE, 2 * sizeof(cl_uint), NULL, &err);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "[DagTech GPU] Output buffer failed (GPU %d): %d\n", gpu_index, err);
+        clReleaseMemObject(ctx->V_buf);    ctx->V_buf   = NULL;
+        clReleaseKernel(ctx->kernel);      ctx->kernel  = NULL;
+        clReleaseProgram(ctx->program);    ctx->program = NULL;
+        clReleaseCommandQueue(ctx->queue); ctx->queue   = NULL;
+        clReleaseContext(ctx->ctx);        ctx->ctx     = NULL;
+        return -1;
+    }
 
-    gpu_ready = 1;
-    printf("[DagTech GPU] Initialized successfully.\n");
+    ctx->ready = 1;
+    return 0;
+}
+
+/* Discover and initialise all requested GPUs on gpu_platform */
+static int gpu_init_all(const char *exe_path) {
+    /* Load kernel source once — reused for every GPU's compile */
+    size_t src_len = 0;
+    char *src = gpu_load_kernel_source(exe_path, &src_len);
+    if (!src) return -1;
+
+    /* Select platform */
+    cl_uint num_platforms = 0;
+    clGetPlatformIDs(0, NULL, &num_platforms);
+    if (num_platforms == 0) {
+        fprintf(stderr, "[DagTech GPU] No OpenCL platforms found.\n");
+        free(src); return -1;
+    }
+    if ((cl_uint)gpu_platform >= num_platforms) {
+        fprintf(stderr, "[DagTech GPU] Platform %d not available (only %u found).\n",
+                gpu_platform, num_platforms);
+        free(src); return -1;
+    }
+    cl_platform_id *platforms = (cl_platform_id *)malloc(num_platforms * sizeof(cl_platform_id));
+    clGetPlatformIDs(num_platforms, platforms, NULL);
+    cl_platform_id plat = platforms[gpu_platform];
+    free(platforms);
+
+    /* Count available GPU devices on this platform */
+    cl_uint num_devices = 0;
+    clGetDeviceIDs(plat, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices);
+    if (num_devices == 0) {
+        fprintf(stderr, "[DagTech GPU] No GPU devices on platform %d.\n", gpu_platform);
+        free(src); return -1;
+    }
+
+    /* Build list of device indices to initialise */
+    int dev_list[MAX_GPUS];
+    int dev_count = 0;
+
+    if (gpu_use_all) {
+        for (cl_uint d = 0; d < num_devices && dev_count < MAX_GPUS; d++)
+            dev_list[dev_count++] = (int)d;
+    } else if (gpu_device_count > 0) {
+        for (int i = 0; i < gpu_device_count && i < MAX_GPUS; i++)
+            dev_list[dev_count++] = gpu_device_list[i];
+    } else {
+        /* Backward-compatible single-device mode */
+        dev_list[0] = gpu_device;
+        dev_count   = 1;
+    }
+
+    /* Initialise each selected device */
+    g_num_gpus = 0;
+    memset(g_gpus, 0, sizeof(g_gpus));
+    for (int i = 0; i < dev_count; i++) {
+        if (g_num_gpus >= MAX_GPUS) break;
+        if (gpu_init_one(&g_gpus[g_num_gpus], plat, gpu_platform,
+                         dev_list[i], g_num_gpus, src, src_len) == 0) {
+            g_num_gpus++;
+        } else {
+            fprintf(stderr, "[DagTech GPU] Skipping device %d (init failed).\n", dev_list[i]);
+        }
+    }
+
+    free(src);
+    if (g_num_gpus == 0) return -1;
+    printf("[DagTech GPU] Initialised %d GPU(s) successfully.\n", g_num_gpus);
     return 0;
 }
 
 static void gpu_cleanup(void) {
-    if (g_output_buf) { clReleaseMemObject(g_output_buf); g_output_buf = NULL; }
-    if (g_V_buf)      { clReleaseMemObject(g_V_buf);      g_V_buf = NULL; }
-    if (g_kernel)     { clReleaseKernel(g_kernel);        g_kernel = NULL; }
-    if (g_program)    { clReleaseProgram(g_program);      g_program = NULL; }
-    if (g_queue)      { clReleaseCommandQueue(g_queue);   g_queue = NULL; }
-    if (g_ctx)        { clReleaseContext(g_ctx);          g_ctx = NULL; }
-    gpu_ready = 0;
+    for (int i = 0; i < g_num_gpus; i++) {
+        GpuCtx *ctx = &g_gpus[i];
+        if (ctx->output_buf) { clReleaseMemObject(ctx->output_buf); ctx->output_buf = NULL; }
+        if (ctx->V_buf)      { clReleaseMemObject(ctx->V_buf);      ctx->V_buf      = NULL; }
+        if (ctx->kernel)     { clReleaseKernel(ctx->kernel);        ctx->kernel     = NULL; }
+        if (ctx->program)    { clReleaseProgram(ctx->program);      ctx->program    = NULL; }
+        if (ctx->queue)      { clReleaseCommandQueue(ctx->queue);   ctx->queue      = NULL; }
+        if (ctx->ctx)        { clReleaseContext(ctx->ctx);          ctx->ctx        = NULL; }
+        ctx->ready = 0;
+    }
+    g_num_gpus = 0;
 }
 
-/* GPU mining thread: handles nonce range 0x80000000 - 0xFFFFFFFF */
+/* GPU mining thread: covers a non-overlapping partition of 0x80000000-0xFFFFFFFF.
+ * GPU i starts at 0x80000000 + i*global_size and strides by N*global_size,
+ * ensuring N parallel GPUs tile the full range without overlap. */
 static void *dagtech_gpu_thread(void *arg) {
-    (void)arg;
+    GpuCtx *ctx = (GpuCtx *)arg;
+    int gpu_idx = ctx->gpu_index;
 
-    if (!gpu_ready) {
-        fprintf(stderr, "[DagTech GPU] GPU not ready, thread exiting.\n");
+    if (!ctx->ready) {
+        fprintf(stderr, "[DagTech GPU] GPU %d not ready, thread exiting.\n", gpu_idx);
         return NULL;
     }
 
-    printf("[DagTech GPU] Worker started (nonce range 0x80000000-0xFFFFFFFF)\n");
+    uint32_t nonce_base   = 0x80000000u + (uint32_t)gpu_idx * (uint32_t)ctx->global_size;
+    uint32_t nonce_stride = (uint32_t)g_num_gpus  * (uint32_t)ctx->global_size;
+
+    printf("[DagTech GPU] Worker %d started: %s (nonce base 0x%08x, stride 0x%x)\n",
+           gpu_idx, ctx->name, nonce_base, nonce_stride);
 
     /* Per-thread scratch buffer for CPU re-verification */
     uint32_t *V_cpu = (uint32_t *)malloc(SCRYPT_N * 128);
     if (!V_cpu) {
-        fprintf(stderr, "[DagTech GPU] Out of memory for CPU verify buffer.\n");
+        fprintf(stderr, "[DagTech GPU] Out of memory for CPU verify buffer (GPU %d).\n", gpu_idx);
         return NULL;
     }
-
-    uint32_t nonce_base = 0x80000000u;
 
     while (running) {
         DagTechJob j;
@@ -653,8 +753,8 @@ static void *dagtech_gpu_thread(void *arg) {
         uint64_t thresh64 = (thresh_d >= 18446744073709551615.0) ? 0xFFFFFFFFFFFFFFFFULL : (uint64_t)thresh_d;
         cl_uint target32 = (cl_uint)(thresh64 >> 32);
 
-        /* Upload header to device */
-        cl_mem header_buf = clCreateBuffer(g_ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+        /* Upload header to this GPU's context */
+        cl_mem header_buf = clCreateBuffer(ctx->ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                                            20 * sizeof(cl_uint), header_words, NULL);
         if (!header_buf) { usleep(50000); continue; }
 
@@ -667,50 +767,39 @@ static void *dagtech_gpu_thread(void *arg) {
 
             /* Reset output buffer */
             cl_uint output_init[2] = { 0xFFFFFFFFu, 0 };
-            clEnqueueWriteBuffer(g_queue, g_output_buf, CL_TRUE, 0,
+            clEnqueueWriteBuffer(ctx->queue, ctx->output_buf, CL_TRUE, 0,
                                  2 * sizeof(cl_uint), output_init, 0, NULL, NULL);
 
             /* Set kernel args */
-            clSetKernelArg(g_kernel, 0, sizeof(cl_mem), &header_buf);
-            clSetKernelArg(g_kernel, 1, sizeof(cl_mem), &g_output_buf);
-            clSetKernelArg(g_kernel, 2, sizeof(cl_mem), &g_V_buf);
-            clSetKernelArg(g_kernel, 3, sizeof(cl_uint), &target32);
-            clSetKernelArg(g_kernel, 4, sizeof(cl_uint), &nonce_base);
+            clSetKernelArg(ctx->kernel, 0, sizeof(cl_mem), &header_buf);
+            clSetKernelArg(ctx->kernel, 1, sizeof(cl_mem), &ctx->output_buf);
+            clSetKernelArg(ctx->kernel, 2, sizeof(cl_mem), &ctx->V_buf);
+            clSetKernelArg(ctx->kernel, 3, sizeof(cl_uint), &target32);
+            clSetKernelArg(ctx->kernel, 4, sizeof(cl_uint), &nonce_base);
 
             /* Launch */
-            long long t_gpu_start = dagtech_tick_ms();
             cl_event ev;
-            cl_int err = clEnqueueNDRangeKernel(g_queue, g_kernel, 1, NULL,
-                                                 &gpu_global_size, NULL, 0, NULL, &ev);
+            cl_int err = clEnqueueNDRangeKernel(ctx->queue, ctx->kernel, 1, NULL,
+                                                 &ctx->global_size, NULL, 0, NULL, &ev);
             if (err != CL_SUCCESS) {
-                fprintf(stderr, "[DagTech GPU] Kernel launch error: %d\n", err);
+                fprintf(stderr, "[DagTech GPU] Kernel launch error (GPU %d): %d\n", gpu_idx, err);
                 break;
             }
             clWaitForEvents(1, &ev);
             clReleaseEvent(ev);
 
-            /* GPU throttle: sleep to limit duty cycle and reduce heat */
-            if (gpu_throttle < 100) {
-                long long elapsed_gpu = dagtech_tick_ms() - t_gpu_start;
-                if (elapsed_gpu > 0) {
-                    long long sleep_ms = elapsed_gpu * (100 - gpu_throttle) / gpu_throttle;
-                    if (sleep_ms > 2000) sleep_ms = 2000;
-                    usleep((unsigned int)(sleep_ms * 1000));
-                }
-            }
-
             /* Read output */
             cl_uint output_result[2] = { 0xFFFFFFFFu, 0 };
-            clEnqueueReadBuffer(g_queue, g_output_buf, CL_TRUE, 0,
+            clEnqueueReadBuffer(ctx->queue, ctx->output_buf, CL_TRUE, 0,
                                 2 * sizeof(cl_uint), output_result, 0, NULL, NULL);
 
             /* Account for hashes */
             pthread_mutex_lock(&gpu_stats_mtx);
-            gpu_hashes_session += gpu_global_size;
+            gpu_hashes_session += ctx->global_size;
             pthread_mutex_unlock(&gpu_stats_mtx);
 
             pthread_mutex_lock(&stats_mtx);
-            total_hashes += gpu_global_size;
+            total_hashes += ctx->global_size;
             pthread_mutex_unlock(&stats_mtx);
 
             /* If candidate found, CPU re-verify before submitting */
@@ -738,7 +827,8 @@ static void *dagtech_gpu_thread(void *arg) {
                                         0xFFFFFFFFFFFFFFFFULL : (uint64_t)threshold_d;
 
                 if (hash_top64 <= threshold64) {
-                    printf("[DagTech GPU] ** SHARE FOUND ** GPU nonce=0x%08x\n", cand_nonce);
+                    printf("[DagTech GPU] ** SHARE FOUND ** GPU %d nonce=0x%08x\n",
+                           gpu_idx, cand_nonce);
 
                     /* Re-read job under lock before submitting */
                     DagTechJob jcur;
@@ -746,17 +836,16 @@ static void *dagtech_gpu_thread(void *arg) {
                     jcur = current_job;
                     pthread_mutex_unlock(&job_mtx);
                     if (jcur.seq == job_seq && jcur.valid) {
-                        /* dagtech_submit_share is defined below; forward-declare via prototype */
                         extern void dagtech_submit_share_ext(const DagTechJob *j, uint32_t nonce);
                         dagtech_submit_share_ext(&jcur, cand_nonce);
                     }
                 }
             }
 
-            /* Advance nonce base, wrap within GPU range */
-            nonce_base += (uint32_t)gpu_global_size;
+            /* Advance nonce base, wrapping within this GPU's partition */
+            nonce_base += nonce_stride;
             if (nonce_base < 0x80000000u)
-                nonce_base = 0x80000000u;
+                nonce_base = 0x80000000u + (uint32_t)gpu_idx * (uint32_t)ctx->global_size;
         }
 
         clReleaseMemObject(header_buf);
@@ -1296,7 +1385,8 @@ static void *dagtech_metrics_thread(void *arg) {
             "\"difficulty\":%.8f,"
             "\"uptime\":%ld,"
             "\"job_id\":\"%s\","
-            "\"gpu_enabled\":%d"
+            "\"gpu_enabled\":%d,"
+            "\"gpu_count\":%d"
             "}",
             DAGTECH_VERSION, pool_host, pool_port,
             wallet, wallet + strlen(wallet) - 4,
@@ -1318,7 +1408,8 @@ static void *dagtech_metrics_thread(void *arg) {
             (unsigned long long)gpu_stale,
             current_difficulty, (long)uptime,
             current_job.job_id,
-            (gpu_enabled == 1) ? 1 : 0);
+            (gpu_enabled == 1) ? 1 : 0,
+            g_num_gpus);
         pthread_mutex_unlock(&stats_mtx);
 
         char response[4096];
@@ -1371,7 +1462,7 @@ static void dagtech_usage(void) {
     printf("    --no-gpu               Disable GPU mining\n");
     printf("    --gpu-intensity <n>    GPU work intensity (0-100, default: 80)\n");
     printf("    --gpu-platform <n>     OpenCL platform index (default: 0)\n");
-    printf("    --gpu-device <n>       OpenCL device index (default: 0)\n");
+    printf("    --gpu-device <n|n,m|all>  OpenCL device(s): 0, 0,1, all (default: 0)\n");
     printf("    --config <path>        Load config from file\n");
     printf("    --save-config          Save current settings to config file and exit\n");
     printf("    --help                 Show this help\n");
@@ -1451,9 +1542,22 @@ static void dagtech_load_config(const char *path) {
         else if (strcmp(key, "DASHBOARD_DIR")== 0) strncpy(dashboard_dir,val, sizeof(dashboard_dir)- 1);
         else if (strcmp(key, "GPU_ENABLED")  == 0) gpu_enabled   = atoi(val);
         else if (strcmp(key, "GPU_INTENSITY")== 0) { gpu_intensity = atoi(val); if (gpu_intensity < 0) gpu_intensity = 0; if (gpu_intensity > 100) gpu_intensity = 100; }
-        else if (strcmp(key, "GPU_THROTTLE") == 0) { gpu_throttle = atoi(val); if (gpu_throttle < 5) gpu_throttle = 5; if (gpu_throttle > 100) gpu_throttle = 100; }
         else if (strcmp(key, "GPU_PLATFORM") == 0) gpu_platform  = atoi(val);
-        else if (strcmp(key, "GPU_DEVICE")   == 0) gpu_device    = atoi(val);
+        else if (strcmp(key, "GPU_DEVICE")   == 0) {
+            if (strcmp(val, "all") == 0) {
+                gpu_use_all = 1;
+            } else if (strchr(val, ',')) {
+                gpu_device_count = 0; gpu_use_all = 0;
+                char tmp[64]; strncpy(tmp, val, sizeof(tmp)-1); tmp[sizeof(tmp)-1] = '\0';
+                char *tok = strtok(tmp, ",");
+                while (tok && gpu_device_count < MAX_GPUS) {
+                    gpu_device_list[gpu_device_count++] = atoi(tok);
+                    tok = strtok(NULL, ",");
+                }
+            } else {
+                gpu_device = atoi(val); gpu_device_count = 0; gpu_use_all = 0;
+            }
+        }
     }
     fclose(f);
     printf("[DagTech] Config loaded from %s\n", path);
@@ -1483,9 +1587,17 @@ static int dagtech_save_config(const char *path) {
     fprintf(f, "METRICS_PORT=%d\n",  metrics_port);
     fprintf(f, "GPU_ENABLED=%d\n",   gpu_enabled);
     fprintf(f, "GPU_INTENSITY=%d\n", gpu_intensity);
-    fprintf(f, "GPU_THROTTLE=%d\n",  gpu_throttle);
     fprintf(f, "GPU_PLATFORM=%d\n",  gpu_platform);
-    fprintf(f, "GPU_DEVICE=%d\n",    gpu_device);
+    if (gpu_use_all) {
+        fprintf(f, "GPU_DEVICE=all\n");
+    } else if (gpu_device_count > 0) {
+        fprintf(f, "GPU_DEVICE=");
+        for (int i = 0; i < gpu_device_count; i++)
+            fprintf(f, "%s%d", i ? "," : "", gpu_device_list[i]);
+        fprintf(f, "\n");
+    } else {
+        fprintf(f, "GPU_DEVICE=%d\n", gpu_device);
+    }
     if (dashboard_dir[0])
         fprintf(f, "DASHBOARD_DIR=%s\n", dashboard_dir);
 
@@ -1573,15 +1685,24 @@ int main(int argc, char **argv) {
             if (gpu_intensity < 0)   gpu_intensity = 0;
             if (gpu_intensity > 100) gpu_intensity = 100;
         }
-        else if (strcmp(argv[i], "--gpu-throttle") == 0 && i + 1 < argc) {
-            gpu_throttle = atoi(argv[++i]);
-            if (gpu_throttle < 5)    gpu_throttle = 5;
-            if (gpu_throttle > 100)  gpu_throttle = 100;
-        }
         else if (strcmp(argv[i], "--gpu-platform") == 0 && i + 1 < argc)
             gpu_platform = atoi(argv[++i]);
-        else if (strcmp(argv[i], "--gpu-device") == 0 && i + 1 < argc)
-            gpu_device = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--gpu-device") == 0 && i + 1 < argc) {
+            const char *val = argv[++i];
+            if (strcmp(val, "all") == 0) {
+                gpu_use_all = 1;
+            } else if (strchr(val, ',')) {
+                gpu_device_count = 0; gpu_use_all = 0;
+                char tmp[64]; strncpy(tmp, val, sizeof(tmp)-1); tmp[sizeof(tmp)-1] = '\0';
+                char *tok = strtok(tmp, ",");
+                while (tok && gpu_device_count < MAX_GPUS) {
+                    gpu_device_list[gpu_device_count++] = atoi(tok);
+                    tok = strtok(NULL, ",");
+                }
+            } else {
+                gpu_device = atoi(val); gpu_device_count = 0; gpu_use_all = 0;
+            }
+        }
         else if (strcmp(argv[i], "--config") == 0 && i + 1 < argc)
             i++;  /* already handled in pass 1 */
         else if (strcmp(argv[i], "--save-config") == 0)
@@ -1658,10 +1779,10 @@ int main(int argc, char **argv) {
     }
 
     if (use_gpu) {
-        if (gpu_init(argv[0]) == 0) {
+        if (gpu_init_all(argv[0]) == 0) {
             gpu_enabled = 1;
-            printf("[DagTech GPU] Intensity: %d | Throttle: %d%% | Platform: %d | Device: %d\n",
-                   gpu_intensity, gpu_throttle, gpu_platform, gpu_device);
+            printf("[DagTech GPU] Intensity: %d | Platform: %d | GPUs active: %d\n",
+                   gpu_intensity, gpu_platform, g_num_gpus);
         } else {
             fprintf(stderr, "[DagTech GPU] GPU init failed - running CPU only.\n");
             gpu_enabled = 0;
@@ -1728,18 +1849,30 @@ int main(int argc, char **argv) {
             pthread_create(&threads[i], NULL, dagtech_mine_thread, &tids[i]);
         }
 
-        /* Start GPU thread */
-        pthread_t gpu_tid;
-        int gpu_thread_started = 0;
+        /* Start GPU threads — one per active device */
+        pthread_t gpu_tids[MAX_GPUS];
+        int gpu_threads_started = 0;
 #ifdef DAGTECH_GPU
-        if (gpu_enabled == 1 && gpu_ready) {
-            pthread_create(&gpu_tid, NULL, dagtech_gpu_thread, NULL);
-            gpu_thread_started = 1;
+        if (gpu_enabled == 1) {
+            for (int gi = 0; gi < g_num_gpus; gi++) {
+                if (g_gpus[gi].ready) {
+                    pthread_create(&gpu_tids[gpu_threads_started], NULL,
+                                   dagtech_gpu_thread, &g_gpus[gi]);
+                    gpu_threads_started++;
+                }
+            }
         }
 #endif
 
-        printf("[DagTech] Mining started! CPU workers: %d | GPU: %s\n\n",
-               num_threads, gpu_enabled == 1 ? "active" : "off");
+        {
+            char _gs[32] = "off";
+#ifdef DAGTECH_GPU
+            if (gpu_enabled == 1)
+                snprintf(_gs, sizeof(_gs), "%d active", g_num_gpus);
+#endif
+            printf("[DagTech] Mining started! CPU workers: %d | GPU: %s\n\n",
+                   num_threads, _gs);
+        }
 
         /* Statistics reporting loop */
         time_t last_report = time(NULL);
@@ -1772,9 +1905,9 @@ int main(int argc, char **argv) {
                 int up_m = (int)((uptime % 3600) / 60);
 
                 if (gpu_enabled == 1) {
-                    printf("[DagTech] %.2f H/s | CPU: %.2f H/s | GPU: %.2f H/s | "
+                    printf("[DagTech] %.2f H/s | CPU: %.2f H/s | GPU[%d]: %.2f H/s | "
                            "Shares: %lu/%lu/%lu/%lu (sub/acc/rej/stale) | Uptime: %dh%dm\n",
-                           current_hashrate, cpu_hashrate, gpu_hashrate,
+                           current_hashrate, cpu_hashrate, g_num_gpus, gpu_hashrate,
                            (unsigned long)total_submitted,
                            (unsigned long)total_accepted,
                            (unsigned long)total_rejected,
@@ -1800,8 +1933,8 @@ int main(int argc, char **argv) {
         /* Clean up session */
         for (int i = 0; i < num_threads; i++)
             pthread_join(threads[i], NULL);
-        if (gpu_thread_started)
-            pthread_join(gpu_tid, NULL);
+        for (int i = 0; i < gpu_threads_started; i++)
+            pthread_join(gpu_tids[i], NULL);
         pthread_join(recv_tid, NULL);
         free(threads);
         free(tids);
