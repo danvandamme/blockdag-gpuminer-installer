@@ -592,6 +592,21 @@
                         <input class="form-input" id="cfgPoolPort" type="number" placeholder="3333" min="1" max="65535">
                     </div>
                 </div>
+                <!-- Pool Profiles -->
+                <div style="margin-top:4px;padding:10px 12px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border-color)">
+                    <div class="form-label" style="margin-bottom:8px;opacity:.65;">&#128190; Pool Profiles <span style="font-weight:400;opacity:.8;">— saved in browser</span></div>
+                    <div style="display:flex;gap:6px;align-items:center">
+                        <select id="poolProfileSelect" class="form-input" style="flex:1;font-size:12px;padding:6px 8px">
+                            <option value="">— select a saved profile —</option>
+                        </select>
+                        <button class="btn-modal-cancel" onclick="loadPoolProfile()" title="Load into fields above" style="padding:6px 11px;white-space:nowrap">Load</button>
+                        <button class="btn-modal-cancel" onclick="deletePoolProfile()" title="Delete selected profile" style="padding:6px 10px;color:#ef4444;border-color:rgba(239,68,68,0.25)">&#x1F5D1;</button>
+                    </div>
+                    <div style="display:flex;gap:6px;align-items:center;margin-top:7px">
+                        <input class="form-input" id="poolProfileName" type="text" placeholder="Profile name — e.g. DagTech Main" style="flex:1;font-size:12px;padding:6px 8px" spellcheck="false" maxlength="40" onkeydown="if(event.key==='Enter')savePoolProfile()">
+                        <button class="btn-modal-cancel" onclick="savePoolProfile()" title="Save current host / port / worker as a named profile" style="padding:6px 11px;white-space:nowrap">Save</button>
+                    </div>
+                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">Worker Name</label>
@@ -1623,10 +1638,79 @@
             }
         }
 
+        // ── Pool profiles (stored in browser localStorage) ────────────────────
+        const _POOL_PROFILES_KEY = 'dagtech_pool_profiles';
+
+        function _getProfiles() {
+            try { return JSON.parse(localStorage.getItem(_POOL_PROFILES_KEY) || '[]'); }
+            catch { return []; }
+        }
+        function _saveProfiles(arr) {
+            localStorage.setItem(_POOL_PROFILES_KEY, JSON.stringify(arr));
+        }
+        function renderPoolProfiles() {
+            const sel = document.getElementById('poolProfileSelect');
+            if (!sel) return;
+            const prev = sel.value;
+            const profiles = _getProfiles();
+            sel.innerHTML = '<option value="">— select a saved profile —</option>';
+            profiles.forEach((p, i) => {
+                const o = document.createElement('option');
+                o.value = i;
+                o.textContent = `${p.name}  (${p.host}:${p.port})`;
+                sel.appendChild(o);
+            });
+            if (prev !== '' && sel.querySelector(`option[value="${prev}"]`)) sel.value = prev;
+        }
+        function loadPoolProfile() {
+            const idx = parseInt(document.getElementById('poolProfileSelect').value);
+            if (isNaN(idx)) return;
+            const p = _getProfiles()[idx];
+            if (!p) return;
+            document.getElementById('cfgPoolHost').value = p.host    || '';
+            document.getElementById('cfgPoolPort').value = p.port    || '';
+            document.getElementById('cfgWorker').value   = p.worker  || '';
+            document.getElementById('cfgPassword').value = p.password|| '';
+        }
+        function savePoolProfile() {
+            const name = document.getElementById('poolProfileName').value.trim();
+            if (!name) { document.getElementById('poolProfileName').focus(); return; }
+            const host = document.getElementById('cfgPoolHost').value.trim();
+            if (!host) { document.getElementById('cfgPoolHost').focus(); return; }
+            const entry = {
+                name,
+                host,
+                port:     document.getElementById('cfgPoolPort').value.trim(),
+                worker:   document.getElementById('cfgWorker').value.trim(),
+                password: document.getElementById('cfgPassword').value.trim(),
+            };
+            const profiles = _getProfiles();
+            const existing = profiles.findIndex(p => p.name === name);
+            if (existing >= 0) profiles[existing] = entry;
+            else profiles.push(entry);
+            _saveProfiles(profiles);
+            renderPoolProfiles();
+            document.getElementById('poolProfileName').value = '';
+            const newIdx = _getProfiles().findIndex(p => p.name === name);
+            if (newIdx >= 0) document.getElementById('poolProfileSelect').value = newIdx;
+        }
+        function deletePoolProfile() {
+            const sel = document.getElementById('poolProfileSelect');
+            const idx = parseInt(sel.value);
+            if (isNaN(idx)) return;
+            const profiles = _getProfiles();
+            if (!profiles[idx]) return;
+            if (!confirm(`Delete profile "${profiles[idx].name}"?`)) return;
+            profiles.splice(idx, 1);
+            _saveProfiles(profiles);
+            renderPoolProfiles();
+        }
+
         async function openConfig() {
             document.getElementById('configStatus').textContent = '';
             document.getElementById('configStatus').style.color = '';
             document.getElementById('configModal').classList.add('open');
+            renderPoolProfiles();
             try {
                 const resp = await fetch(`${CONTROL_URL}/config`, { signal: AbortSignal.timeout(4000) });
                 if (!resp.ok) throw new Error();
