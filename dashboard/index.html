@@ -1843,10 +1843,11 @@
                     const r = await fetch(`${CONTROL_URL}/status`, { signal: AbortSignal.timeout(2000) });
                     if (r.ok) {
                         clearInterval(poll);
-                        document.getElementById('updStatus').textContent = '✓ Control server restarted successfully.';
+                        document.getElementById('updStatus').textContent = '✓ Restarted — reloading dashboard…';
                         document.getElementById('updStatus').className = 'update-status ok';
                         document.getElementById('btnRestartServer').style.display = 'none';
                         btn.disabled = false; btn.textContent = '↺ Restart Control Server';
+                        setTimeout(() => window.location.reload(), 1500);
                     }
                 } catch(_) {}
                 if (attempts > 30) {
